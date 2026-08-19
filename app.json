@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "Sky's the Limit",
+    "slug": "makeitmorebetter",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.makeitmorebetter.skysthelimit"
+    },
+    "android": {
+      "package": "com.makeitmorebetter.skysthelimit"
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
