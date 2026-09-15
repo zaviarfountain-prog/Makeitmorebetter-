@@ -104,7 +104,7 @@ function Stat({label, value, accent}) {
 
 export default function App() {
   const [step, setStep] = useState(0);
-  const [cash, setCash] = useState(850);
+  const [cash, setCash] = useState(2500);
   const [savings, setSavings] = useState(0);
   const [credit, setCredit] = useState(575);
   const [xp, setXp] = useState(0);
