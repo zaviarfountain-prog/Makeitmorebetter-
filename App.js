@@ -20,7 +20,7 @@ const story = [
     key: 'character',
     eyebrow: 'CHARACTER SETUP',
     title: 'Meet Zabby',
-    body: 'You are starting fresh with $850 cash, a 575 credit score, and one goal: build a better life.',
+    body: 'You are starting fresh with $2000 cash, a 575 credit score, and one goal: build a better life.',
     button: 'CHOOSE YOUR DREAM',
   },
   {
