@@ -1,11 +1,17 @@
-import React, { useMemo, useState } from 'react';
-import { SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { StatusBar } from 'expo-status-bar';
+import React, { useMemo, useRef, useState } from 'react';
+import {
+  SafeAreaView,
+  StatusBar,
+  ScrollView,
+  StyleSheet,
+  TouchableOpacity,
+  Text,
+  View,
+} from 'react-native';
 
 const GOLD = '#f4c542';
 const BLUE = '#3ea6ff';
 const GREEN = '#4cd97b';
-const RED = '#ff6262';
 const PURPLE = '#ad7bff';
 
 const story = [
@@ -20,130 +26,349 @@ const story = [
     key: 'character',
     eyebrow: 'CHARACTER SETUP',
     title: 'Meet Zabby',
-    body: 'You are starting fresh with $850 cash, a 575 credit score, and one goal: build a better life.',
+    body:
+      'You are starting fresh with $2500 cash, a 575 credit score, and one goal: build a better life.',
     button: 'CHOOSE YOUR DREAM',
   },
   {
     key: 'dream',
     eyebrow: 'YOUR DREAM',
     title: 'Build a Life With Options',
-    body: 'Get stable housing, reliable transportation, better work, savings, property, businesses, and eventually a legacy.',
+    body:
+      'Get stable housing, reliable transportation, better work, savings, property, businesses, and eventually a legacy.',
     button: 'FIND HOUSING',
   },
   {
     key: 'housing',
     eyebrow: 'HOUSING & BILLS',
     title: 'Room Rental — East Oakland',
-    body: 'Rent: $700/month. A practical first move that leaves room for food, transportation, savings, and credit building.',
+    body:
+      'Rent: $700/month. A practical first move that leaves room for food, transportation, savings, and credit building.',
     button: 'CHOOSE TRANSPORTATION',
   },
   {
     key: 'transport',
     eyebrow: 'TRANSPORTATION',
     title: 'Start Smart',
-    body: 'Use affordable transportation now. Upgrade to a car after your income, savings, and credit score improve.',
+    body:
+      'Use affordable transportation now. Upgrade to a car after your income, savings, and credit score improve.',
     button: 'GO TO WORK',
   },
   {
     key: 'work',
     eyebrow: 'EMPLOYMENT CENTER',
     title: 'Warehouse Associate',
-    body: '$18/hour • 40 hours/week. Work shifts earn cash and XP while you unlock training and higher-paying careers.',
+    body:
+      '$18/hour • 8-hour shift. Each completed shift earns $144 and 40 XP.',
     button: 'WORK A SHIFT',
   },
   {
     key: 'bill',
     eyebrow: 'LIFE EVENT',
-    title: 'A Bill Is Due',
-    body: 'Paying on time protects your credit and builds discipline. Missing it may cost fees, XP, and credit points.',
-    button: 'PAY BILL',
+    title: 'Unexpected Bill',
+    body: 'A surprise expense hits your budget.',
+    button: 'HANDLE THE BILL',
   },
   {
     key: 'payday',
     eyebrow: 'PAYDAY',
     title: '+ $720',
-    body: 'Your paycheck lands. Bills are covered. Now decide how much to save and how much to keep available.',
+    body:
+      'Your paycheck lands. Bills are covered. Now decide how much to save and how much to keep available.',
     button: 'SEE THE TEMPTATION',
   },
   {
     key: 'temptation',
     eyebrow: 'CHOICE',
     title: 'The $399 Temptation',
-    body: 'A new gadget looks good, but buying it now slows your emergency fund. Your choices shape the future.',
+    body:
+      'A new gadget looks good, but buying it now slows your emergency fund. Your choices shape the future.',
     button: 'SKIP IT & SAVE',
   },
   {
     key: 'report',
     eyebrow: 'WEEK 1 REPORT',
     title: 'You Are Moving Forward',
-    body: 'Bills paid on time • Savings growing • Credit protected • XP earned. Small wins compound.',
+    body:
+      'Bills paid on time • Savings growing • Credit protected • XP earned. Small wins compound.',
     button: 'ENTER FREE ROAM',
   },
 ];
 
-const places = [
-  ['🏦', 'Bank', 'Build credit, save, borrow wisely'],
-  ['💼', 'Jobs', 'Work shifts and unlock careers'],
-  ['🎓', 'Training', 'CDL, trades, healthcare, tech'],
-  ['🏠', 'Real Estate', 'Rent, buy, and own property'],
-  ['🚗', 'Dealership', 'Upgrade transportation'],
-  ['🏢', 'Business', 'Start and grow companies'],
-  ['📈', 'Investments', 'Build long-term wealth'],
-  ['🎰', 'Casino Property', 'Future property expansion — locked'],
-  ['🏆', 'Achievements', 'Earn XP and level up'],
-];
+const Stat = ({ label, value, accent, onPress }) => (
+  <TouchableOpacity
+    onPress={onPress}
+    style={[styles.stat, { borderColor: accent }]}
+  >
+    <Text style={[styles.statLabel, { color: accent }]}>{label}</Text>
 
-function Stat({label, value, accent}) {
-  return (
-    <View style={styles.stat}>
-      <Text style={styles.statLabel}>{label}</Text>
-      <Text style={[styles.statValue, {color: accent || '#fff'}]}>{value}</Text>
-    </View>
-  );
-}
+    <Text
+      numberOfLines={1}
+      adjustsFontSizeToFit
+      style={styles.statValue}
+    >
+      {value}
+    </Text>
+  </TouchableOpacity>
+);
 
 export default function App() {
   const [step, setStep] = useState(0);
-  const [cash, setCash] = useState(850);
+  const [cash, setCash] = useState(2500);
   const [savings, setSavings] = useState(0);
   const [credit, setCredit] = useState(575);
   const [xp, setXp] = useState(0);
+  const [place, setPlace] = useState(null);
+
+  /*
+   * Refs change immediately without waiting for the next render.
+   * They prevent rapid button taps from paying the same shift twice.
+   */
+  const paidWorkShiftRef = useRef(false);
+  const lastAdvancedStepRef = useRef(-1);
 
   const freeRoam = step >= story.length;
   const current = story[Math.min(step, story.length - 1)];
 
-  const progress = useMemo(() => Math.min(100, Math.round((step / story.length) * 100)), [step]);
+  const progress = useMemo(
+    () => Math.min(100, Math.round((step / story.length) * 100)),
+    [step]
+  );
 
   const advance = () => {
-    const k = current?.key;
-    if (k === 'work') { setCash(v => v + 144); setXp(v => v + 40); }
-    if (k === 'bill') { setCash(v => Math.max(0, v - 120)); setCredit(v => v + 3); setXp(v => v + 25); }
-    if (k === 'payday') { setCash(v => v + 720); setSavings(v => v + 200); setXp(v => v + 30); }
-    if (k === 'temptation') { setSavings(v => v + 100); setXp(v => v + 20); }
-    setStep(v => v + 1);
+    /*
+     * Stop rapid double taps from processing the same story screen twice.
+     */
+    if (lastAdvancedStepRef.current === step) {
+      return;
+    }
+
+    lastAdvancedStepRef.current = step;
+
+    const key = current?.key;
+
+    if (key === 'work') {
+      setCash((value) => value + 144);
+      setXp((value) => value + 40);
+    }
+
+    if (key === 'bill') {
+      setCash((value) => Math.max(0, value - 120));
+      setCredit((value) => value + 3);
+      setXp((value) => value + 25);
+    }
+
+    if (key === 'payday') {
+      setCash((value) => value + 720);
+      setSavings((value) => value + 200);
+      setXp((value) => value + 30);
+    }
+
+    if (key === 'temptation') {
+      setSavings((value) => value + 100);
+      setXp((value) => value + 20);
+    }
+
+    setStep((value) => value + 1);
   };
+
+  const startWorkShift = () => {
+    /*
+     * Tapping WORK on the map begins one new unpaid shift.
+     */
+    paidWorkShiftRef.current = false;
+    setPlace('WORK');
+  };
+
+  const completeWorkShift = () => {
+    /*
+     * Do nothing if this shift was already paid.
+     */
+    if (paidWorkShiftRef.current) {
+      return;
+    }
+
+    paidWorkShiftRef.current = true;
+
+    /*
+     * Pay exactly once, award XP, and return to the map.
+     */
+    setCash((value) => value + 144);
+    setXp((value) => value + 40);
+    setPlace(null);
+  };
+
+  const restartGame = () => {
+    paidWorkShiftRef.current = false;
+    lastAdvancedStepRef.current = -1;
+
+    setPlace(null);
+    setStep(0);
+    setCash(2500);
+    setSavings(0);
+    setCredit(575);
+    setXp(0);
+  };
+ 
+  /*
+   * WORK SHIFT SCREEN
+   */
+  if (place === 'WORK') {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <StatusBar barStyle="light-content" />
+
+        <ScrollView contentContainerStyle={styles.page}>
+          <Text style={styles.eyebrow}>EMPLOYMENT CENTER</Text>
+          <Text style={styles.title}>Warehouse Shift</Text>
+
+          <Text style={styles.body}>
+            Complete one 8-hour shift to earn $144 and 40 XP.
+          </Text>
+
+          <TouchableOpacity
+            style={styles.primary}
+            onPress={completeWorkShift}
+          >
+            <Text style={styles.primaryText}>
+              WORK A SHIFT — EARN $144
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.secondary}
+            onPress={() => setPlace(null)}
+          >
+            <Text style={styles.secondaryText}>BACK TO MAP</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  /*
+   * HOME, BANK, AND STORE SCREENS
+   */
+if (place === 'BANK') {
+    return (
+        <SafeAreaView style={styles.safe}>
+              <StatusBar barStyle="light-content" />
+
+                    <ScrollView>
+                            <Text style={styles.title}>BANK</Text>
+
+                                    <Text style={styles.body}>Cash: ${cash}</Text>
+                                            <Text style={styles.body}>Savings: ${savings}</Text>
+                                                    <Text style={styles.body}>Credit: {credit}</Text>
+
+                                                            <TouchableOpacity
+                                                                      style={styles.secondary}
+                                                                                onPress={() => {
+                                                                                            const amount = Math.min(100, cash);
+                                                                                                        setCash(v => v - amount);
+                                                                                                                    setSavings(v => v + amount);
+                                                                                                                                if (amount > 0) setCredit(v => Math.min(850, v + 1));
+                                                                                                                                          }}
+                                                                                                                                                  >
+                                                                                                                                                            <Text style={styles.secondaryText}>DEPOSIT $100</Text>
+                                                                                                                                                                    </TouchableOpacity>
+
+                                                                                                                                                                            <TouchableOpacity
+                                                                                                                                                                                      style={styles.secondary}
+                                                                                                                                                                                                onPress={() => {
+                                                                                                                                                                                                            const amount = Math.min(100, savings);
+                                                                                                                                                                                                                        setSavings(v => v - amount);
+                                                                                                                                                                                                                                    setCash(v => v + amount);
+                                                                                                                                                                                                                                              }}
+                                                                                                                                                                                                                                                      >
+                                                                                                                                                                                                                                                                <Text style={styles.secondaryText}>WITHDRAW $100</Text>
+                                                                                                                                                                                                                                                                        </TouchableOpacity>
+
+                                                                                                                                                                                                                                                                                <TouchableOpacity
+                                                                                                                                                                                                                                                                                          style={styles.secondary}
+                                                                                                                                                                                                                                                                                                    onPress={() => setPlace(null)}
+                                                                                                                                                                                                                                                                                                            >
+                                                                                                                                                                                                                                                                                                                      <Text style={styles.secondaryText}>BACK TO MAP</Text>
+                                                                                                                                                                                                                                                                                                                              </TouchableOpacity>
+                                                                                                                                                                                                                                                                                                                                    </ScrollView>
+                                                                                                                                                                                                                                                                                                                                        </SafeAreaView>
+                                                                                                                                                                                                                                                                                                                                          );
+                                                                                                                                                                                                                                                                                                                                          }
+}  if (place) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <StatusBar barStyle="light-content" />
+
+        <ScrollView contentContainerStyle={styles.page}>
+          <Text style={styles.title}>{place}</Text>
+          <Text style={styles.body}>Welcome to {place}.</Text>
+
+          <TouchableOpacity
+            style={styles.secondary}
+            onPress={() => setPlace(null)}
+          >
+            <Text style={styles.secondaryText}>BACK TO MAP</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar style="light" />
+      <StatusBar barStyle="light-content" />
+
       <ScrollView contentContainerStyle={styles.page}>
         <View style={styles.header}>
           <View>
             <Text style={styles.logoSmall}>SKY'S</Text>
             <Text style={styles.logoBig}>THE LIMIT</Text>
           </View>
-          <View style={styles.levelPill}><Text style={styles.levelText}>LEVEL {1 + Math.floor(xp/250)}</Text></View>
+
+          <View style={styles.levelPill}>
+            <Text style={styles.levelText}>
+              LEVEL {1 + Math.floor(xp / 250)}
+            </Text>
+          </View>
         </View>
 
         <View style={styles.statsRow}>
-          <Stat label="CASH" value={`$${cash}`} accent={GREEN} />
-          <Stat label="SAVINGS" value={`$${savings}`} accent={BLUE} />
-          <Stat label="CREDIT" value={credit} accent={GOLD} />
-          <Stat label="XP" value={xp} accent={PURPLE} />
+          <Stat
+            label="CASH"
+            value={`$${cash}`}
+            accent={GREEN}
+            onPress={() => alert(`Cash balance: $${cash}`)}
+          />
+
+          <Stat
+            label="SAVINGS"
+            value={`$${savings}`}
+            accent={BLUE}
+            onPress={() => alert(`Savings: $${savings}`)}
+          />
+
+          <Stat
+            label="CREDIT"
+            value={credit}
+            accent={GOLD}
+            onPress={() => alert(`Credit score: ${credit}`)}
+          />
+
+          <Stat
+            label="XP"
+            value={xp}
+            accent={PURPLE}
+            onPress={() => alert(`XP: ${xp}`)}
+          />
         </View>
 
         <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, {width: `${progress}%`}]} />
+          <View
+            style={[
+              styles.progressFill,
+              { width: `${progress}%` },
+            ]}
+          />
         </View>
 
         {!freeRoam ? (
@@ -151,8 +376,14 @@ export default function App() {
             <Text style={styles.eyebrow}>{current.eyebrow}</Text>
             <Text style={styles.title}>{current.title}</Text>
             <Text style={styles.body}>{current.body}</Text>
-            <TouchableOpacity style={styles.primary} onPress={advance}>
-              <Text style={styles.primaryText}>{current.button}</Text>
+
+            <TouchableOpacity
+              style={styles.primary}
+              onPress={advance}
+            >
+              <Text style={styles.primaryText}>
+                {current.button}
+              </Text>
             </TouchableOpacity>
           </View>
         ) : (
@@ -160,61 +391,272 @@ export default function App() {
             <View style={styles.heroCard}>
               <Text style={styles.eyebrow}>FREE ROAM — ALPHA</Text>
               <Text style={styles.title}>The City Is Open</Text>
-              <Text style={styles.body}>Choose where to go next. This playable alpha establishes the life-simulation loop and the systems we can keep expanding.</Text>
+
+              <Text style={styles.body}>
+                Choose where to go next. Visit WORK whenever you
+                want to begin a new shift.
+              </Text>
             </View>
 
             <Text style={styles.sectionTitle}>CITY MAP</Text>
+
             <View style={styles.grid}>
-              {places.map(([icon, name, desc]) => (
-                <TouchableOpacity key={name} style={styles.place} onPress={() => setXp(v => v + 5)}>
-                  <Text style={styles.placeIcon}>{icon}</Text>
-                  <Text style={styles.placeName}>{name}</Text>
-                  <Text style={styles.placeDesc}>{desc}</Text>
-                </TouchableOpacity>
-              ))}
+              <TouchableOpacity
+                style={styles.placeCard}
+                onPress={() => setPlace('HOME')}
+              >
+                <Text style={styles.placeIcon}>🏠</Text>
+                <Text style={styles.placeName}>HOME</Text>
+                <Text style={styles.placeDesc}>
+                  Rest and manage your life
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.placeCard}
+                onPress={startWorkShift}
+              >
+                <Text style={styles.placeIcon}>🏢</Text>
+                <Text style={styles.placeName}>WORK</Text>
+                <Text style={styles.placeDesc}>
+                  Earn $144 and 40 XP per shift
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.placeCard}
+                onPress={() => setPlace('BANK')}
+              >
+                <Text style={styles.placeIcon}>🏦</Text>
+                <Text style={styles.placeName}>BANK</Text>
+                <Text style={styles.placeDesc}>
+                  Save money and build credit
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.placeCard}
+                onPress={() => setPlace('STORE')}
+              >
+                <Text style={styles.placeIcon}>🏪</Text>
+                <Text style={styles.placeName}>STORE</Text>
+                <Text style={styles.placeDesc}>
+                  Buy food and essentials
+                </Text>
+              </TouchableOpacity>
             </View>
 
-            <TouchableOpacity style={styles.secondary} onPress={() => {
-              setStep(0); setCash(850); setSavings(0); setCredit(575); setXp(0);
-            }}>
-              <Text style={styles.secondaryText}>RESTART ALPHA</Text>
+            <TouchableOpacity
+              style={styles.secondary}
+              onPress={restartGame}
+            >
+              <Text style={styles.secondaryText}>
+                RESTART ALPHA
+              </Text>
             </TouchableOpacity>
           </>
         )}
 
-        <Text style={styles.footer}>Sky's the Limit • Alpha 1.0</Text>
+        <Text style={styles.footer}>
+          Sky's the Limit • Alpha 1.0
+        </Text>
       </ScrollView>
     </SafeAreaView>
   );
-}
+
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#07101c' },
-  page: { padding: 18, paddingBottom: 40, gap: 16 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  logoSmall: { color: '#fff', fontSize: 18, fontWeight: '900', letterSpacing: 4 },
-  logoBig: { color: GOLD, fontSize: 28, fontWeight: '900', letterSpacing: 1 },
-  levelPill: { backgroundColor: '#13253d', borderWidth: 1, borderColor: '#2b4668', borderRadius: 999, paddingVertical: 8, paddingHorizontal: 12 },
-  levelText: { color: BLUE, fontSize: 12, fontWeight: '800' },
-  statsRow: { flexDirection: 'row', gap: 8 },
-  stat: { flex: 1, backgroundColor: '#0d1a2a', borderWidth: 1, borderColor: '#1f3550', borderRadius: 14, padding: 10 },
-  statLabel: { color: '#7f91a8', fontSize: 9, fontWeight: '800' },
-  statValue: { fontSize: 18, fontWeight: '900', marginTop: 2 },
-  progressTrack: { height: 6, backgroundColor: '#17263a', borderRadius: 99, overflow: 'hidden' },
-  progressFill: { height: '100%', backgroundColor: GOLD },
-  heroCard: { backgroundColor: '#0d1a2a', borderWidth: 1, borderColor: '#243c5b', borderRadius: 24, padding: 22, minHeight: 330, justifyContent: 'center' },
-  eyebrow: { color: BLUE, fontWeight: '900', letterSpacing: 2, fontSize: 12, marginBottom: 14 },
-  title: { color: '#fff', fontWeight: '900', fontSize: 34, lineHeight: 38, marginBottom: 16 },
-  body: { color: '#b8c4d4', fontSize: 17, lineHeight: 25, marginBottom: 26 },
-  primary: { backgroundColor: GOLD, borderRadius: 16, paddingVertical: 16, paddingHorizontal: 18, alignItems: 'center' },
-  primaryText: { color: '#111', fontWeight: '900', fontSize: 15 },
-  sectionTitle: { color: '#fff', fontSize: 22, fontWeight: '900', marginTop: 6 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  place: { width: '48%', minHeight: 155, backgroundColor: '#0d1a2a', borderWidth: 1, borderColor: '#243c5b', borderRadius: 18, padding: 16 },
-  placeIcon: { fontSize: 28, marginBottom: 10 },
-  placeName: { color: '#fff', fontSize: 16, fontWeight: '900', marginBottom: 6 },
-  placeDesc: { color: '#8fa0b5', fontSize: 12, lineHeight: 17 },
-  secondary: { borderWidth: 1, borderColor: '#3e5878', borderRadius: 16, padding: 15, alignItems: 'center', marginTop: 4 },
-  secondaryText: { color: '#c8d3e0', fontWeight: '900' },
-  footer: { color: '#53657a', textAlign: 'center', marginTop: 8, fontSize: 12 },
+  safe: {
+    flex: 1,
+    backgroundColor: '#07101c',
+  },
+
+  page: {
+    padding: 18,
+    paddingBottom: 40,
+    gap: 16,
+  },
+
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+
+  logoSmall: {
+    color: '#ffffff',
+    fontSize: 18,
+    fontWeight: '900',
+    letterSpacing: 4,
+  },
+
+  logoBig: {
+    color: GOLD,
+    fontSize: 28,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+
+  levelPill: {
+    backgroundColor: '#13253d',
+    borderWidth: 1,
+    borderColor: '#2b4668',
+    borderRadius: 999,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+
+  levelText: {
+    color: BLUE,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+
+  statsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+
+  stat: {
+    flex: 1,
+    minWidth: 0,
+    backgroundColor: '#0d1a2a',
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 10,
+  },
+
+  statLabel: {
+    fontSize: 10,
+    fontWeight: '900',
+  },
+
+  statValue: {
+    color: '#ffffff',  
+    fontSize: 18,
+    fontWeight: '900',
+    marginTop: 2,
+  },
+
+  progressTrack: {
+    height: 6,
+    backgroundColor: '#17263a',
+    borderRadius: 99,
+    overflow: 'hidden',
+  },
+
+  progressFill: {
+    height: '100%',
+    backgroundColor: GOLD,
+  },
+
+  heroCard: {
+    backgroundColor: '#0d1a2a',
+    borderWidth: 1,
+    borderColor: '#243c5b',
+    borderRadius: 24,
+    padding: 22,
+    minHeight: 330,
+    justifyContent: 'center',
+  },
+
+  eyebrow: {
+    color: BLUE,
+    fontWeight: '900',
+    letterSpacing: 2,
+    fontSize: 12,
+    marginBottom: 14,
+  },
+
+  title: {
+    color: '#ffffff',
+    fontWeight: '900',
+    fontSize: 34,
+    lineHeight: 38,
+    marginBottom: 16,
+  },
+
+  body: {
+    color: '#b8c4d4',
+    fontSize: 17,
+    lineHeight: 25,
+    marginBottom: 26,
+  },
+
+  primary: {
+    backgroundColor: GOLD,
+    borderRadius: 16,
+    paddingVertical: 16,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+  },
+
+  primaryText: {
+    color: '#111111',
+    fontWeight: '900',
+    fontSize: 15,
+    textAlign: 'center',
+  },
+
+  sectionTitle: {
+    color: '#ffffff',
+    fontSize: 22,
+    fontWeight: '900',
+    marginTop: 6,
+  },
+
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+
+  placeCard: {
+    minHeight: 155,
+    width: '48%',
+    backgroundColor: '#0d1a2a',
+    borderWidth: 1,
+    borderColor: '#243c5b',
+    borderRadius: 18,
+    padding: 16,
+  },
+
+  placeIcon: {
+    fontSize: 28,
+    marginBottom: 10,
+  },
+
+  placeName: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '900',
+    marginBottom: 6,
+  },
+
+  placeDesc: {
+    color: '#8fa0b5',
+    fontSize: 12,
+    lineHeight: 17,
+  },
+
+  secondary: {
+    borderWidth: 1,
+    borderColor: '#3e5878',
+    borderRadius: 16,
+    padding: 15,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+
+  secondaryText: {
+    color: '#c8d3e0',
+    fontWeight: '900',
+  },
+
+  footer: {
+    color: '#53657a',
+    textAlign: 'center',
+    marginTop: 8,
+    fontSize: 12,
+  },
 });
