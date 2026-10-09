@@ -294,7 +294,7 @@ if (place === 'BANK') {
                                                                                                                                                                                                                                                                                                                                         </SafeAreaView>
                                                                                                                                                                                                                                                                                                                                           );
                                                                                                                                                                                                                                                                                                                                           }
-}  if (place) {
+ if (place) {
     return (
       <SafeAreaView style={styles.safe}>
         <StatusBar barStyle="light-content" />
@@ -463,7 +463,7 @@ if (place === 'BANK') {
       </ScrollView>
     </SafeAreaView>
   );
-
+}
 
 const styles = StyleSheet.create({
   safe: {
