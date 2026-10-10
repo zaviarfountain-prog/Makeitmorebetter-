@@ -204,7 +204,7 @@ export default function App() {
 
     setPlace(null);
     setStep(0);
-    setCash(250*0);
+    setCash(2500);
     setSavings(0);
     setCredit(575);
     setXp(0);
