@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useMemo, useRef, useState } from 'react';
 import {
   SafeAreaView,
@@ -112,13 +113,93 @@ const Stat = ({ label, value, accent, onPress }) => (
   </TouchableOpacity>
 );
 
+
+const SKY_SAVE_KEY = "skys-limit-save-v1";
+const SKY_INITIAL = {
+  step: 0, cash: 2500, savings: 0,
+  credit: 575, xp: 0, place: null
+};
+
 export default function App() {
-  const [step, setStep] = useState(0);
-  const [cash, setCash] = useState(2500);
-  const [savings, setSavings] = useState(0);
-  const [credit, setCredit] = useState(575);
-  const [xp, setXp] = useState(0);
-  const [place, setPlace] = useState(null);
+  const [initialSave, setInitialSave] = useState(null);
+  const [loadError, setLoadError] = useState(false);
+  const [saveError, setSaveError] = useState(false);
+  const saveQueue = useRef(Promise.resolve());
+
+  React.useEffect(() => {
+    let active = true;
+    async function load() {
+      try {
+        const raw = await AsyncStorage.getItem(SKY_SAVE_KEY);
+        let saved = SKY_INITIAL;
+        if (raw !== null) {
+          saved = JSON.parse(raw);
+          if (!saved || saved.version !== 1)
+            throw new Error("Unsupported save");
+          for (const key of ["step", "cash", "savings", "credit", "xp"]) {
+            if (!Number.isFinite(saved[key]))
+              throw new Error("Invalid save");
+          }
+          if (!Number.isInteger(saved.step) || saved.step < 0)
+            throw new Error("Invalid story progress");
+          if (saved.place !== null && typeof saved.place !== "string")
+            throw new Error("Invalid screen");
+        }
+        if (active) setInitialSave(saved);
+      } catch (error) {
+        console.warn("Load failed:", error);
+        if (active) setLoadError(true);
+      }
+    }
+    load();
+    return () => { active = false; };
+  }, []);
+
+  const persistSave = React.useCallback((state) => {
+    const json = JSON.stringify({ ...state, version: 1 });
+    saveQueue.current = saveQueue.current
+      .then(() => AsyncStorage.setItem(SKY_SAVE_KEY, json))
+      .then(() => setSaveError(false))
+      .catch((error) => {
+        console.warn("Save failed:", error);
+        setSaveError(true);
+      });
+  }, []);
+
+  if (loadError) {
+    return React.createElement(
+      Text, { style: { padding: 30 } },
+      "Could not load your save. Please refresh to retry."
+    );
+  }
+  if (initialSave === null) {
+    return React.createElement(
+      Text, { style: { padding: 30 } }, "Loading your game..."
+    );
+  }
+  return React.createElement(
+    React.Fragment, null,
+    saveError ? React.createElement(
+      Text, { style: { padding: 12, color: "red" } },
+      "Progress could not be saved. Please keep the game open."
+    ) : null,
+    React.createElement(Game, { initialSave, persistSave })
+  );
+}
+
+function Game({ initialSave, persistSave }) {
+
+  const [step, setStep] = useState(initialSave.step);
+  const [cash, setCash] = useState(initialSave.cash);
+  const [savings, setSavings] = useState(initialSave.savings);
+  const [credit, setCredit] = useState(initialSave.credit);
+  const [xp, setXp] = useState(initialSave.xp);
+  const [place, setPlace] = useState(initialSave.place);
+
+  React.useEffect(() => {
+    persistSave({ step, cash, savings, credit, xp, place });
+  }, [step, cash, savings, credit, xp, place, persistSave]);
+
 
   /*
    * Refs change immediately without waiting for the next render.
@@ -204,7 +285,7 @@ export default function App() {
 
     setPlace(null);
     setStep(0);
-    setCash(250*0);
+    setCash(2500);
     setSavings(0);
     setCredit(575);
     setXp(0);
