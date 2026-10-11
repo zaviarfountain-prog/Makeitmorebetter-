@@ -117,7 +117,7 @@ const Stat = ({ label, value, accent, onPress }) => (
 const SKY_SAVE_KEY = "skys-limit-save-v1";
 const SKY_INITIAL = {
   step: 0, cash: 2500, savings: 0,
-  credit: 575, xp: 0, place: null
+  credit: 575, xp: 0, place: null, employment: 'none'
 };
 
 export default function App() {
@@ -144,6 +144,12 @@ export default function App() {
             throw new Error("Invalid story progress");
           if (saved.place !== null && typeof saved.place !== "string")
             throw new Error("Invalid screen");
+          /* Older saves predate employment: they load as not applied. */
+          if (saved.employment === undefined || !["none", "applied", "hired"].includes(saved.employment))
+            saved.employment = "none";
+          /* Old saves may have the shift screen open; shifts now need training first. */
+          if (saved.place === "WORK")
+            saved.place = null;
         }
         if (active) setInitialSave(saved);
       } catch (error) {
@@ -195,10 +201,12 @@ function Game({ initialSave, persistSave }) {
   const [credit, setCredit] = useState(initialSave.credit);
   const [xp, setXp] = useState(initialSave.xp);
   const [place, setPlace] = useState(initialSave.place);
+  const [employment, setEmployment] = useState(initialSave.employment);
+  const [employmentMessage, setEmploymentMessage] = useState("");
 
   React.useEffect(() => {
-    persistSave({ step, cash, savings, credit, xp, place });
-  }, [step, cash, savings, credit, xp, place, persistSave]);
+    persistSave({ step, cash, savings, credit, xp, place, employment });
+  }, [step, cash, savings, credit, xp, place, employment, persistSave]);
 
 
   /*
@@ -279,6 +287,17 @@ function Game({ initialSave, persistSave }) {
     setPlace(null);
   };
 
+  /* Application + hiring (prototype: guaranteed hire). No stat changes. */
+  const applyForJob = () => {
+    if (employment !== 'none') return;
+    setEmployment('applied');
+    setEmploymentMessage('Application submitted. Check your hiring result.');
+  };
+  const checkHiringResult = () => {
+    if (employment !== 'applied') return;
+    setEmployment('hired');
+    setEmploymentMessage("You're hired! Paid training is required before your first shift.");
+  };
   const restartGame = () => {
     paidWorkShiftRef.current = false;
     lastAdvancedStepRef.current = -1;
@@ -289,10 +308,44 @@ function Game({ initialSave, persistSave }) {
     setSavings(0);
     setCredit(575);
     setXp(0);
+    setEmployment('none');
+    setEmploymentMessage('');
   };
  
   /*
+   * EMPLOYMENT APPLICATION SCREEN - entry: the Work button on the city map.
+   * Warehouse Associate is the first job. Shifts stay locked until paid training ships.
+   */
+  if (place === 'EMPLOYMENT') {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <StatusBar barStyle="light-content" />
+        <ScrollView contentContainerStyle={styles.page}>
+          <Text style={styles.eyebrow}>EMPLOYMENT CENTER</Text>
+          <Text style={styles.title}>Warehouse Associate</Text>
+          {employment === 'none' && (<>
+            <Text style={styles.body}>Apply to begin your career. Once hired, you must complete paid training before working.</Text>
+            <TouchableOpacity style={styles.primary} onPress={applyForJob}><Text style={styles.primaryText}>APPLY FOR JOB</Text></TouchableOpacity>
+          </>)}
+          {employment === 'applied' && (<>
+            <Text style={styles.body}>Your application is in. Check your hiring result below.</Text>
+            <TouchableOpacity style={styles.primary} onPress={checkHiringResult}><Text style={styles.primaryText}>CHECK HIRING RESULT</Text></TouchableOpacity>
+          </>)}
+          {employment === 'hired' && (<>
+            <Text style={styles.body}>Hired - Training Required.</Text>
+            <Text style={styles.body}>Paid training must be completed before you can work.</Text>
+            <Text style={styles.body}>Training arrives in the next update.</Text>
+          </>)}
+          {employmentMessage !== '' && (<Text style={styles.body}>{employmentMessage}</Text>)}
+          <TouchableOpacity style={styles.secondary} onPress={() => { setEmploymentMessage(''); setPlace(null); }}><Text style={styles.secondaryText}>BACK TO MAP</Text></TouchableOpacity>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  /*
    * WORK SHIFT SCREEN
+   * (Locked until paid training ships; the map now routes through the Employment Center.)
    */
   if (place === 'WORK') {
     return (
@@ -495,12 +548,12 @@ if (place === 'BANK') {
 
               <TouchableOpacity
                 style={styles.placeCard}
-                onPress={startWorkShift}
+                onPress={() => setPlace('EMPLOYMENT')}
               >
                 <Text style={styles.placeIcon}>🏢</Text>
                 <Text style={styles.placeName}>WORK</Text>
                 <Text style={styles.placeDesc}>
-                  Earn $144 and 40 XP per shift
+                  Apply at the Employment Center
                 </Text>
               </TouchableOpacity>
 
