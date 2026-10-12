@@ -117,8 +117,17 @@ const Stat = ({ label, value, accent, onPress }) => (
 const SKY_SAVE_KEY = "skys-limit-save-v1";
 const SKY_INITIAL = {
   step: 0, cash: 2500, savings: 0,
-  credit: 575, xp: 0, place: null, employment: 'none'
+  credit: 575, xp: 0, place: null, employment: 'none',
+  training: 'incomplete', pendingWages: 0
 };
+
+/* Warehouse Associate: first job. Duration + pay stay together so future jobs can reuse training. */
+const WAREHOUSE_JOB = {
+  title: 'Warehouse Associate',
+  trainingHours: 8,
+  trainingRate: 18,
+};
+const warehouseTrainingPay = WAREHOUSE_JOB.trainingHours * WAREHOUSE_JOB.trainingRate;
 
 export default function App() {
   const [initialSave, setInitialSave] = useState(null);
@@ -147,6 +156,11 @@ export default function App() {
           /* Older saves predate employment: they load as not applied. */
           if (saved.employment === undefined || !["none", "applied", "hired"].includes(saved.employment))
             saved.employment = "none";
+          /* Training fields are optional: older saves load incomplete with $0 pending. */
+          if (saved.training === undefined || !["incomplete", "complete"].includes(saved.training))
+            saved.training = "incomplete";
+          if (!Number.isFinite(saved.pendingWages) || saved.pendingWages < 0)
+            saved.pendingWages = 0;
           /* Old saves may have the shift screen open; shifts now need training first. */
           if (saved.place === "WORK")
             saved.place = null;
@@ -203,10 +217,14 @@ function Game({ initialSave, persistSave }) {
   const [place, setPlace] = useState(initialSave.place);
   const [employment, setEmployment] = useState(initialSave.employment);
   const [employmentMessage, setEmploymentMessage] = useState("");
+  const [training, setTraining] = useState(initialSave.training);
+  const [pendingWages, setPendingWages] = useState(initialSave.pendingWages);
+  const [trainingMessage, setTrainingMessage] = useState("");
+  const trainingPaidRef = useRef(false);
 
   React.useEffect(() => {
-    persistSave({ step, cash, savings, credit, xp, place, employment });
-  }, [step, cash, savings, credit, xp, place, employment, persistSave]);
+    persistSave({ step, cash, savings, credit, xp, place, employment, training, pendingWages });
+  }, [step, cash, savings, credit, xp, place, employment, training, pendingWages, persistSave]);
 
 
   /*
@@ -298,6 +316,15 @@ function Game({ initialSave, persistSave }) {
     setEmployment('hired');
     setEmploymentMessage("You're hired! Paid training is required before your first shift.");
   };
+/* Paid training: one full training day, no real-world wait. Pays exactly once into pending wages. */
+  const completeTraining = () => {
+    if (employment !== 'hired' || training !== 'incomplete') return;
+    if (trainingPaidRef.current) return;
+    trainingPaidRef.current = true;
+    setTraining('complete');
+    setPendingWages((v) => v + warehouseTrainingPay);
+    setTrainingMessage('Training complete. You earned $' + warehouseTrainingPay + ', payable Friday.');
+  };
   const restartGame = () => {
     paidWorkShiftRef.current = false;
     lastAdvancedStepRef.current = -1;
@@ -310,6 +337,10 @@ function Game({ initialSave, persistSave }) {
     setXp(0);
     setEmployment('none');
     setEmploymentMessage('');
+    setTraining('incomplete');
+    setPendingWages(0);
+    setTrainingMessage('');
+    trainingPaidRef.current = false;
   };
  
   /*
@@ -332,9 +363,17 @@ function Game({ initialSave, persistSave }) {
             <TouchableOpacity style={styles.primary} onPress={checkHiringResult}><Text style={styles.primaryText}>CHECK HIRING RESULT</Text></TouchableOpacity>
           </>)}
           {employment === 'hired' && (<>
-            <Text style={styles.body}>Hired - Training Required.</Text>
-            <Text style={styles.body}>Paid training must be completed before you can work.</Text>
-            <Text style={styles.body}>Training arrives in the next update.</Text>
+            {training === 'incomplete' ? (
+              <Text style={styles.body}>Hired - Training Required.</Text>
+            ) : (
+              <Text style={styles.body}>Hired - Training Complete.</Text>
+            )}
+            {training === 'incomplete' ? (<>
+              <Text style={styles.body}>Paid training must be completed before you can work.</Text>
+              <TouchableOpacity style={styles.primary} onPress={() => setPlace('EMPLOYMENT_TRAINING')}><Text style={styles.primaryText}>START PAID TRAINING</Text></TouchableOpacity>
+            </>) : (<>
+              <Text style={styles.body}>Training complete. Pending wages: ${pendingWages}, payable Friday.</Text>
+            </>)}
           </>)}
           {employmentMessage !== '' && (<Text style={styles.body}>{employmentMessage}</Text>)}
           <TouchableOpacity style={styles.secondary} onPress={() => { setEmploymentMessage(''); setPlace(null); }}><Text style={styles.secondaryText}>BACK TO MAP</Text></TouchableOpacity>
@@ -347,6 +386,35 @@ function Game({ initialSave, persistSave }) {
    * WORK SHIFT SCREEN
    * (Locked until paid training ships; the map now routes through the Employment Center.)
    */
+  /*
+   * PAID TRAINING SCREEN - entry: Start Paid Training in the Employment Center.
+   * Completion pays into pending wages. Friday payroll is not implemented yet.
+   */
+  if (place === 'EMPLOYMENT_TRAINING') {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <StatusBar barStyle="light-content" />
+        <ScrollView contentContainerStyle={styles.page}>
+          <Text style={styles.eyebrow}>EMPLOYMENT CENTER</Text>
+          <Text style={styles.title}>{WAREHOUSE_JOB.title} - Paid Training</Text>
+          <Text style={styles.body}>Duration: {WAREHOUSE_JOB.trainingHours} in-game hours</Text>
+          <Text style={styles.body}>Rate: ${WAREHOUSE_JOB.trainingRate}/hour</Text>
+          <Text style={styles.body}>Training earnings: ${warehouseTrainingPay}, payable Friday</Text>
+          <Text style={styles.body}>No fee</Text>
+          {training === 'incomplete' && employment === 'hired' && (<>
+            <TouchableOpacity style={styles.primary} onPress={completeTraining}><Text style={styles.primaryText}>COMPLETE TRAINING</Text></TouchableOpacity>
+          </>)}
+          {training === 'complete' && (<>
+            <Text style={styles.body}>Training complete. Pending wages: ${pendingWages}, payable Friday.</Text>
+          </>)}
+          {trainingMessage !== '' && (<Text style={styles.body}>{trainingMessage}</Text>)}
+          <Text style={styles.body}>${warehouseTrainingPay} earned toward Friday pay. Payment is pending; Friday payroll arrives in a later update.</Text>
+          <TouchableOpacity style={styles.secondary} onPress={() => { setTrainingMessage(''); setPlace('EMPLOYMENT'); }}><Text style={styles.secondaryText}>BACK TO EMPLOYMENT CENTER</Text></TouchableOpacity>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
   if (place === 'WORK') {
     return (
       <SafeAreaView style={styles.safe}>
