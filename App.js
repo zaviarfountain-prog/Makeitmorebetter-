@@ -18,7 +18,7 @@ const PURPLE = '#ad7bff';
 const story = [
   {
     key: 'start',
-    eyebrow: 'LIFE SIMULATOR',
+    eyebrow: 'EARLY DEMO • LIFE SIMULATOR',
     title: "SKY'S THE LIMIT",
     body: 'Your journey. Your choices. Your future.',
     button: 'START YOUR JOURNEY',
