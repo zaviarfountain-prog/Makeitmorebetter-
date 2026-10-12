@@ -118,7 +118,8 @@ const SKY_SAVE_KEY = "skys-limit-save-v1";
 const SKY_INITIAL = {
   step: 0, cash: 2500, savings: 0,
   credit: 575, xp: 0, place: null, employment: 'none',
-  training: 'incomplete', pendingWages: 0
+  training: 'incomplete', pendingWages: 0,
+  day: 0, paycheck: 0, lastPayday: -1, lastShiftDay: -1
 };
 
 /* Warehouse Associate: first job. Duration + pay stay together so future jobs can reuse training. */
@@ -126,8 +127,14 @@ const WAREHOUSE_JOB = {
   title: 'Warehouse Associate',
   trainingHours: 8,
   trainingRate: 18,
+  shiftHours: 8,
+  shiftRate: 18,
+  shiftXp: 40,
 };
 const warehouseTrainingPay = WAREHOUSE_JOB.trainingHours * WAREHOUSE_JOB.trainingRate;
+const warehouseShiftPay = WAREHOUSE_JOB.shiftHours * WAREHOUSE_JOB.shiftRate;
+const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const FRIDAY = 4;
 
 export default function App() {
   const [initialSave, setInitialSave] = useState(null);
@@ -161,6 +168,15 @@ export default function App() {
             saved.training = "incomplete";
           if (!Number.isFinite(saved.pendingWages) || saved.pendingWages < 0)
             saved.pendingWages = 0;
+          /* Payroll fields are optional: older saves start Monday with empty payroll. */
+          if (!Number.isInteger(saved.day) || saved.day < 0)
+            saved.day = 0;
+          if (!Number.isFinite(saved.paycheck) || saved.paycheck < 0)
+            saved.paycheck = 0;
+          if (!Number.isInteger(saved.lastPayday))
+            saved.lastPayday = -1;
+          if (!Number.isInteger(saved.lastShiftDay))
+            saved.lastShiftDay = -1;
           /* Old saves may have the shift screen open; shifts now need training first. */
           if (saved.place === "WORK")
             saved.place = null;
@@ -221,10 +237,31 @@ function Game({ initialSave, persistSave }) {
   const [pendingWages, setPendingWages] = useState(initialSave.pendingWages);
   const [trainingMessage, setTrainingMessage] = useState("");
   const trainingPaidRef = useRef(false);
+  const [day, setDay] = useState(initialSave.day);
+  const [paycheck, setPaycheck] = useState(initialSave.paycheck);
+  const [lastPayday, setLastPayday] = useState(initialSave.lastPayday);
+  const [lastShiftDay, setLastShiftDay] = useState(initialSave.lastShiftDay);
+  const [paycheckMessage, setPaycheckMessage] = useState("");
+  const collectPayRef = useRef(false);
 
   React.useEffect(() => {
-    persistSave({ step, cash, savings, credit, xp, place, employment, training, pendingWages });
-  }, [step, cash, savings, credit, xp, place, employment, training, pendingWages, persistSave]);
+    persistSave({ step, cash, savings, credit, xp, place, employment, training, pendingWages, day, paycheck, lastPayday, lastShiftDay });
+  }, [step, cash, savings, credit, xp, place, employment, training, pendingWages, day, paycheck, lastPayday, lastShiftDay, persistSave]);
+
+  /*
+   * Friday payroll cutover: on entering Friday, move wages accrued before
+   * Friday into the available paycheck, added to any uncollected amount.
+   * lastPayday makes it run exactly once per Friday, even across refreshes.
+   */
+  React.useEffect(() => {
+    if (day % 7 !== FRIDAY || lastPayday === day) return;
+    if (pendingWages > 0) {
+      setPaycheck(paycheck + pendingWages);
+      setPendingWages(0);
+    }
+    setLastPayday(day);
+    collectPayRef.current = false;
+  }, [day]);
 
 
   /*
@@ -289,19 +326,17 @@ function Game({ initialSave, persistSave }) {
 
   const completeWorkShift = () => {
     /*
-     * Do nothing if this shift was already paid.
+     * One shift per in-game day. Earnings go to pending wages for Friday
+     * payroll; XP is awarded immediately, as before.
      */
-    if (paidWorkShiftRef.current) {
-      return;
-    }
+    if (employment !== 'hired' || training !== 'complete') return;
+    if (lastShiftDay === day || paidWorkShiftRef.current) return;
 
     paidWorkShiftRef.current = true;
 
-    /*
-     * Pay exactly once, award XP, and return to the map.
-     */
-    setCash((value) => value + 144);
-    setXp((value) => value + 40);
+    setPendingWages((v) => v + warehouseShiftPay);
+    setXp((v) => v + WAREHOUSE_JOB.shiftXp);
+    setLastShiftDay(day);
     setPlace(null);
   };
 
@@ -322,9 +357,28 @@ function Game({ initialSave, persistSave }) {
     if (trainingPaidRef.current) return;
     trainingPaidRef.current = true;
     setTraining('complete');
+    setEmploymentMessage('');
     setPendingWages((v) => v + warehouseTrainingPay);
     setTrainingMessage('Training complete. You earned $' + warehouseTrainingPay + ', payable Friday.');
   };
+  /* Rest at HOME advances the in-game calendar by one day and re-arms the daily shift. */
+  const restDay = () => {
+    paidWorkShiftRef.current = false;
+    setDay((d) => d + 1);
+  };
+
+  /*
+   * COLLECT PAYCHECK moves the available paycheck into cash exactly once.
+   * Pending wages are never touched: they belong to the following Friday.
+   */
+  const collectPaycheck = () => {
+    if (paycheck <= 0 || collectPayRef.current) return;
+    collectPayRef.current = true;
+    setCash((c) => c + paycheck);
+    setPaycheck(0);
+    setPaycheckMessage('Paycheck collected: $' + paycheck + ' added to cash.');
+  };
+
   const restartGame = () => {
     paidWorkShiftRef.current = false;
     lastAdvancedStepRef.current = -1;
@@ -341,6 +395,12 @@ function Game({ initialSave, persistSave }) {
     setPendingWages(0);
     setTrainingMessage('');
     trainingPaidRef.current = false;
+    setDay(0);
+    setPaycheck(0);
+    setLastPayday(-1);
+    setLastShiftDay(-1);
+    setPaycheckMessage('');
+    collectPayRef.current = false;
   };
  
   /*
@@ -416,6 +476,10 @@ function Game({ initialSave, persistSave }) {
   }
 
   if (place === 'WORK') {
+    /* Shifts unlock after hiring + training. The map routes here only then;
+       this gate covers stale saves that still have the shift screen open. */
+    const canWork = employment === 'hired' && training === 'complete';
+    const shiftDoneToday = lastShiftDay === day;
     return (
       <SafeAreaView style={styles.safe}>
         <StatusBar barStyle="light-content" />
@@ -424,16 +488,85 @@ function Game({ initialSave, persistSave }) {
           <Text style={styles.eyebrow}>EMPLOYMENT CENTER</Text>
           <Text style={styles.title}>Warehouse Shift</Text>
 
+          <Text style={styles.body}>Today is {DAY_NAMES[day % 7]}.</Text>
+
+          {!canWork && (
+            <Text style={styles.body}>Paid training must be completed before you can work.</Text>
+          )}
+
+          {canWork && (<>
+            <Text style={styles.body}>
+              Complete one {WAREHOUSE_JOB.shiftHours}-hour shift to earn ${warehouseShiftPay} in pending wages and {WAREHOUSE_JOB.shiftXp} XP. Wages pay out on Friday.
+            </Text>
+
+            <Text style={styles.body}>Pending wages: ${pendingWages}</Text>
+            <Text style={styles.body}>Available paycheck: ${paycheck}</Text>
+
+            {!shiftDoneToday ? (
+              <TouchableOpacity
+                style={styles.primary}
+                onPress={completeWorkShift}
+              >
+                <Text style={styles.primaryText}>
+                  WORK A SHIFT — EARN ${warehouseShiftPay} PENDING
+                </Text>
+              </TouchableOpacity>
+            ) : (
+              <Text style={styles.body}>Shift completed for today. Next shift available tomorrow.</Text>
+            )}
+
+            {paycheck > 0 && (
+              <TouchableOpacity
+                style={styles.primary}
+                onPress={collectPaycheck}
+              >
+                <Text style={styles.primaryText}>
+                  COLLECT PAYCHECK — ${paycheck}
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {paycheckMessage !== '' && (
+              <Text style={styles.body}>{paycheckMessage}</Text>
+            )}
+          </>)}
+
+          <TouchableOpacity
+            style={styles.secondary}
+            onPress={() => { setPaycheckMessage(''); setPlace(null); }}
+          >
+            <Text style={styles.secondaryText}>BACK TO MAP</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  /*
+   * HOME SCREEN - resting advances the in-game calendar by one day.
+   */
+  if (place === 'HOME') {
+    const tomorrow = DAY_NAMES[(day + 1) % 7];
+    return (
+      <SafeAreaView style={styles.safe}>
+        <StatusBar barStyle="light-content" />
+
+        <ScrollView contentContainerStyle={styles.page}>
+          <Text style={styles.eyebrow}>HOME</Text>
+          <Text style={styles.title}>Rest</Text>
+
+          <Text style={styles.body}>Today is {DAY_NAMES[day % 7]}.</Text>
+
           <Text style={styles.body}>
-            Complete one 8-hour shift to earn $144 and 40 XP.
+            Rest until tomorrow to advance the calendar. Payday is Friday.
           </Text>
 
           <TouchableOpacity
             style={styles.primary}
-            onPress={completeWorkShift}
+            onPress={restDay}
           >
             <Text style={styles.primaryText}>
-              WORK A SHIFT — EARN $144
+              REST — WAKE UP {tomorrow.toUpperCase()}
             </Text>
           </TouchableOpacity>
 
@@ -610,18 +743,23 @@ if (place === 'BANK') {
                 <Text style={styles.placeIcon}>🏠</Text>
                 <Text style={styles.placeName}>HOME</Text>
                 <Text style={styles.placeDesc}>
-                  Rest and manage your life
+                  Rest — advances the calendar one day
                 </Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={styles.placeCard}
-                onPress={() => setPlace('EMPLOYMENT')}
+                onPress={() => {
+                  if (employment === 'hired' && training === 'complete') setPlace('WORK');
+                  else setPlace('EMPLOYMENT');
+                }}
               >
                 <Text style={styles.placeIcon}>🏢</Text>
                 <Text style={styles.placeName}>WORK</Text>
                 <Text style={styles.placeDesc}>
-                  Apply at the Employment Center
+                  {employment === 'hired' && training === 'complete'
+                    ? 'Work a shift — earn $144 pending'
+                    : 'Apply at the Employment Center'}
                 </Text>
               </TouchableOpacity>
 
