@@ -271,6 +271,7 @@ function Game({ initialSave, persistSave }) {
   const [paycheckMessage, setPaycheckMessage] = useState("");
   const collectPayRef = useRef(false);
   const [scenePhase, setScenePhase] = useState('ready');
+  const [sceneHint, setSceneHint] = useState('');
   const [sceneSize, setSceneSize] = useState({ sw: 0, sh: 0 });
   const playerPos = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const boxPos = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
@@ -383,36 +384,80 @@ function Game({ initialSave, persistSave }) {
     return true;
   };
 
-  /* Plays the box-moving animation. Awards nothing. */
+  /*
+   * Interactive warehouse task. Opening, beginning, picking up, moving, and
+   * delivering award nothing; only completeVisualShift() calls awardShift().
+   */
+  const sceneBoxAt = () => ({ x: 0.2 * sceneSize.sw, y: 0.42 * sceneSize.sh });
+  const sceneDropAt = () => ({ x: 0.74 * sceneSize.sw, y: 0.42 * sceneSize.sh });
+
+  /* BEGIN SHIFT: places everyone and waits for the player's first choice. */
   const beginVisualTask = () => {
     if (scenePhase !== 'ready') return;
     const { sw, sh } = sceneSize;
     if (sw === 0) return;
-    const entrance = { x: 0.5 * sw, y: 0.86 * sh };
-    const boxAt = { x: 0.2 * sw, y: 0.42 * sh };
-    const dropAt = { x: 0.74 * sw, y: 0.42 * sh };
-    playerPos.setValue(entrance);
-    boxPos.setValue(boxAt);
-    setScenePhase('working');
-    Animated.sequence([
+    playerPos.setValue({ x: 0.5 * sw, y: 0.86 * sh });
+    boxPos.setValue(sceneBoxAt());
+    setSceneHint('');
+    setScenePhase('awaitPickup');
+  };
+
+  /* Player chose the package: walk to it, then pick it up. */
+  const pickupPackage = () => {
+    if (scenePhase !== 'awaitPickup') return;
+    const boxAt = sceneBoxAt();
+    setSceneHint('');
+    if (reduceMotion) {
+      playerPos.setValue(boxAt);
+      boxPos.setValue({ x: boxAt.x, y: boxAt.y - 40 });
+      setScenePhase('awaitDrop');
+      return;
+    }
+    setScenePhase('toPackage');
+    Animated.timing(playerPos, {
+      toValue: boxAt, duration: 900, useNativeDriver: false,
+    }).start(({ finished }) => {
+      if (finished) {
+        boxPos.setValue({ x: boxAt.x, y: boxAt.y - 40 });
+        setScenePhase('awaitDrop');
+      }
+    });
+  };
+
+  /* Player chose the drop zone: carry the package over and set it down. */
+  const deliverPackage = () => {
+    if (scenePhase !== 'awaitDrop') return;
+    const dropAt = sceneDropAt();
+    setSceneHint('');
+    if (reduceMotion) {
+      playerPos.setValue({ x: dropAt.x, y: dropAt.y });
+      boxPos.setValue(dropAt);
+      setScenePhase('delivered');
+      return;
+    }
+    setScenePhase('toDrop');
+    Animated.parallel([
       Animated.timing(playerPos, {
-        toValue: boxAt, duration: 1100, useNativeDriver: false,
+        toValue: { x: dropAt.x, y: dropAt.y },
+        duration: 1100, useNativeDriver: false,
       }),
-      Animated.parallel([
-        Animated.timing(playerPos, {
-          toValue: dropAt, duration: 1400, useNativeDriver: false,
-        }),
-        Animated.timing(boxPos, {
-          toValue: { x: dropAt.x, y: dropAt.y - 16 },
-          duration: 1400, useNativeDriver: false,
-        }),
-      ]),
-    ]).start(() => setScenePhase('done'));
+      Animated.timing(boxPos, {
+        toValue: dropAt, duration: 1100, useNativeDriver: false,
+      }),
+    ]).start(({ finished }) => {
+      if (finished) setScenePhase('delivered');
+    });
+  };
+
+  /* Tapping the drop zone before pickup shows a hint; nothing else changes. */
+  const tapDropZone = () => {
+    if (scenePhase === 'awaitDrop') deliverPackage();
+    else if (scenePhase === 'awaitPickup') setSceneHint('Pick up the package first.');
   };
 
   /* Completion re-checks eligibility and awards exactly once via awardShift(). */
   const completeVisualShift = () => {
-    if (scenePhase !== 'done') return;
+    if (scenePhase !== 'delivered') return;
     if (awardShift()) setScenePhase('complete');
   };
 
@@ -654,9 +699,13 @@ function Game({ initialSave, persistSave }) {
             >
               <View style={[styles.sceneShelf, { left: '4%', top: '18%' }]} />
               <View style={[styles.sceneShelf, { left: '4%', top: '52%' }]} />
-              <View style={[styles.sceneDrop, { right: '6%', top: '30%' }]}>
+              <TouchableOpacity
+                style={[styles.sceneDrop, { right: '6%', top: '30%' }, scenePhase === 'awaitDrop' && styles.dropActive]}
+                onPress={tapDropZone}
+                disabled={scenePhase !== 'awaitDrop' && scenePhase !== 'awaitPickup'}
+              >
                 <Text style={styles.sceneTag}>DROP ZONE</Text>
-              </View>
+              </TouchableOpacity>
               <View style={[styles.scenePerson, { left: '30%', top: '30%' }]}>
                 <Text style={styles.sceneEmoji}>👷</Text>
                 <Text style={styles.sceneTag}>SAM</Text>
@@ -669,7 +718,15 @@ function Game({ initialSave, persistSave }) {
                 <Animated.View style={[styles.sceneActor, {
                   transform: [{ translateX: boxPos.x }, { translateY: boxPos.y }],
                 }]}>
-                  <Text style={styles.sceneEmoji}>📦</Text>
+                  <TouchableOpacity
+                    onPress={pickupPackage}
+                    disabled={scenePhase !== 'awaitPickup'}
+                    hitSlop={{ top: 24, bottom: 24, left: 24, right: 24 }}
+                  >
+                    <View style={[styles.packageWrap, scenePhase === 'awaitPickup' && styles.targetOn]}>
+                      <Text style={styles.sceneEmoji}>📦</Text>
+                    </View>
+                  </TouchableOpacity>
                 </Animated.View>
               )}
               {measured && (
@@ -687,13 +744,32 @@ function Game({ initialSave, persistSave }) {
                 <Text style={styles.primaryText}>BEGIN SHIFT</Text>
               </TouchableOpacity>
             )}
-            {scenePhase === 'working' && (
-              <Text style={styles.body}>Working... moving the box to the drop zone.</Text>
+            {scenePhase === 'awaitPickup' && (<>
+              <Text style={styles.body}>Tap the package to pick it up.</Text>
+              <TouchableOpacity style={styles.primary} onPress={pickupPackage}>
+                <Text style={styles.primaryText}>PICK UP PACKAGE</Text>
+              </TouchableOpacity>
+            </>)}
+            {scenePhase === 'toPackage' && (
+              <Text style={styles.body}>Heading to the package…</Text>
             )}
-            {scenePhase === 'done' && (
+            {scenePhase === 'awaitDrop' && (<>
+              <Text style={styles.body}>Tap the DROP ZONE to deliver the package.</Text>
+              <TouchableOpacity style={styles.primary} onPress={deliverPackage}>
+                <Text style={styles.primaryText}>DELIVER PACKAGE</Text>
+              </TouchableOpacity>
+            </>)}
+            {scenePhase === 'toDrop' && (
+              <Text style={styles.body}>Delivering the package…</Text>
+            )}
+            {scenePhase === 'delivered' && (<>
+              <Text style={styles.body}>Package delivered. Complete your shift to record your earnings.</Text>
               <TouchableOpacity style={styles.primary} onPress={completeVisualShift}>
                 <Text style={styles.primaryText}>COMPLETE SHIFT</Text>
               </TouchableOpacity>
+            </>)}
+            {sceneHint !== '' && (
+              <Text style={styles.body}>{sceneHint}</Text>
             )}
             {scenePhase === 'complete' && (<>
               <Text style={styles.body}>Shift complete!</Text>
@@ -1763,5 +1839,21 @@ const styles = StyleSheet.create({
     width: 5,
     height: 10,
     backgroundColor: '#5a3d24',
+  },
+
+  packageWrap: {
+    padding: 4,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+
+  targetOn: {
+    borderColor: GOLD,
+    borderStyle: 'dashed',
+  },
+
+  dropActive: {
+    backgroundColor: 'rgba(232, 185, 60, 0.15)',
   },
 });
