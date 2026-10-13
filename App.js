@@ -8,6 +8,8 @@ import {
   TouchableOpacity,
   Text,
   View,
+  Animated,
+  AccessibilityInfo,
 } from 'react-native';
 
 const GOLD = '#f4c542';
@@ -243,6 +245,14 @@ function Game({ initialSave, persistSave }) {
   const [lastShiftDay, setLastShiftDay] = useState(initialSave.lastShiftDay);
   const [paycheckMessage, setPaycheckMessage] = useState("");
   const collectPayRef = useRef(false);
+  const [scenePhase, setScenePhase] = useState('ready');
+  const [sceneSize, setSceneSize] = useState({ sw: 0, sh: 0 });
+  const playerPos = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  const boxPos = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  const [mapTravel, setMapTravel] = useState(null);
+  const [mapSize, setMapSize] = useState({ w: 0, h: 0 });
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const mapPlayerPos = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const [benefitsFrom, setBenefitsFrom] = useState(null);
 
   React.useEffect(() => {
@@ -325,20 +335,108 @@ function Game({ initialSave, persistSave }) {
     setPlace('WORK');
   };
 
-  const completeWorkShift = () => {
-    /*
-     * One shift per in-game day. Earnings go to pending wages for Friday
-     * payroll; XP is awarded immediately, as before.
-     */
-    if (employment !== 'hired' || training !== 'complete') return;
-    if (lastShiftDay === day || paidWorkShiftRef.current) return;
+  /*
+   * The single authoritative shift reward. Guards are checked here and again
+   * at completion time; awards exactly once per in-game day. Returns true when
+   * the award was granted. Navigation is handled by the calling screen.
+   */
+  const awardShift = () => {
+    if (employment !== 'hired' || training !== 'complete') return false;
+    if (lastShiftDay === day || paidWorkShiftRef.current) return false;
 
     paidWorkShiftRef.current = true;
 
     setPendingWages((v) => v + warehouseShiftPay);
     setXp((v) => v + WAREHOUSE_JOB.shiftXp);
     setLastShiftDay(day);
-    setPlace(null);
+    return true;
+  };
+
+  /* Plays the box-moving animation. Awards nothing. */
+  const beginVisualTask = () => {
+    if (scenePhase !== 'ready') return;
+    const { sw, sh } = sceneSize;
+    if (sw === 0) return;
+    const entrance = { x: 0.5 * sw, y: 0.86 * sh };
+    const boxAt = { x: 0.2 * sw, y: 0.42 * sh };
+    const dropAt = { x: 0.74 * sw, y: 0.42 * sh };
+    playerPos.setValue(entrance);
+    boxPos.setValue(boxAt);
+    setScenePhase('working');
+    Animated.sequence([
+      Animated.timing(playerPos, {
+        toValue: boxAt, duration: 1100, useNativeDriver: false,
+      }),
+      Animated.parallel([
+        Animated.timing(playerPos, {
+          toValue: dropAt, duration: 1400, useNativeDriver: false,
+        }),
+        Animated.timing(boxPos, {
+          toValue: { x: dropAt.x, y: dropAt.y - 16 },
+          duration: 1400, useNativeDriver: false,
+        }),
+      ]),
+    ]).start(() => setScenePhase('done'));
+  };
+
+  /* Completion re-checks eligibility and awards exactly once via awardShift(). */
+  const completeVisualShift = () => {
+    if (scenePhase !== 'done') return;
+    if (awardShift()) setScenePhase('complete');
+  };
+
+  /* Respect the OS reduced-motion setting for map travel, where supported. */
+  React.useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then(setReduceMotion)
+      .catch(() => {});
+  }, []);
+
+  /* Where each building's door is, as fractions of the measured city scene. */
+  const cityDoors = (w, h) => ({
+    HOME: { x: 0.2 * w, y: 0.24 * h },
+    WORK: { x: 0.8 * w, y: 0.24 * h },
+    BANK: { x: 0.2 * w, y: 0.68 * h },
+    STORE: { x: 0.8 * w, y: 0.68 * h },
+  });
+
+  /* Resolve a destination tap to its existing screen (WORK keeps its gates). */
+  const resolveDest = (dest) => (
+    dest === 'WORK'
+      ? (employment === 'hired' && training === 'complete' ? 'WORK' : 'EMPLOYMENT')
+      : dest
+  );
+
+  /*
+   * Visual map travel. Presentation only: changes no cash, savings, credit,
+   * XP, wages, or calendar. Ignores taps while walking; SKIP jumps to arrival.
+   */
+  const travelTo = (dest) => {
+    if (mapTravel) return;
+    const place = resolveDest(dest);
+    const { w, h } = mapSize;
+    if (reduceMotion || w === 0) {
+      setPlace(place);
+      return;
+    }
+    mapPlayerPos.setValue({ x: 0.46 * w, y: 0.86 * h });
+    setMapTravel(dest);
+    Animated.timing(mapPlayerPos, {
+      toValue: cityDoors(w, h)[dest],
+      duration: 900,
+      useNativeDriver: false,
+    }).start(({ finished }) => {
+      setMapTravel(null);
+      if (finished) setPlace(place);
+    });
+  };
+
+  const skipTravel = () => {
+    if (!mapTravel) return;
+    const dest = mapTravel;
+    mapPlayerPos.stopAnimation();
+    setMapTravel(null);
+    setPlace(resolveDest(dest));
   };
 
   /* Application + hiring (prototype: guaranteed hire). No stat changes. */
@@ -471,6 +569,133 @@ function Game({ initialSave, persistSave }) {
   }
 
   /*
+   * VISUAL WAREHOUSE SHIFT (place key: 'WORK_VISUAL')
+   *
+   * A small playable slice of the existing warehouse shift. Opening the scene
+   * awards nothing; BEGIN SHIFT plays the box-moving animation; COMPLETE SHIFT
+   * routes through awardShift() exactly once. Leaving or refreshing mid-scene
+   * is a safe retry: scenePhase is transient and resets to 'ready'.
+   */
+  if (place === 'WORK_VISUAL') {
+    const canWork = employment === 'hired' && training === 'complete';
+    const shiftDoneToday = lastShiftDay === day;
+    const measured = sceneSize.sw > 0 && sceneSize.sh > 0;
+    return (
+      <SafeAreaView style={styles.safe}>
+        <StatusBar barStyle="light-content" />
+        <ScrollView contentContainerStyle={styles.page}>
+          <Text style={styles.eyebrow}>EMPLOYMENT CENTER</Text>
+          <Text style={styles.title}>Warehouse Shift</Text>
+
+          {!canWork && (
+            <Text style={styles.body}>Paid training must be completed before you can work.</Text>
+          )}
+
+          {canWork && (!shiftDoneToday || scenePhase === 'complete') && (<>
+            <Text style={styles.body}>
+              Move the box to the marked drop zone, then complete your shift.
+            </Text>
+
+            <View
+              style={styles.scene}
+              onLayout={(e) => {
+                const { width, height } = e.nativeEvent.layout;
+                setSceneSize((prev) => (
+                  prev.sw === width && prev.sh === height
+                    ? prev
+                    : { sw: width, sh: height }
+                ));
+                playerPos.setValue({ x: 0.5 * width, y: 0.86 * height });
+                boxPos.setValue({ x: 0.2 * width, y: 0.42 * height });
+              }}
+            >
+              <View style={[styles.sceneShelf, { left: '4%', top: '18%' }]} />
+              <View style={[styles.sceneShelf, { left: '4%', top: '52%' }]} />
+              <View style={[styles.sceneDrop, { right: '6%', top: '30%' }]}>
+                <Text style={styles.sceneTag}>DROP ZONE</Text>
+              </View>
+              <View style={[styles.scenePerson, { left: '30%', top: '30%' }]}>
+                <Text style={styles.sceneEmoji}>👷</Text>
+                <Text style={styles.sceneTag}>SAM</Text>
+              </View>
+              <View style={[styles.scenePerson, { left: '52%', top: '62%' }]}>
+                <Text style={styles.sceneEmoji}>👷‍♀️</Text>
+                <Text style={styles.sceneTag}>JO</Text>
+              </View>
+              {measured && (
+                <Animated.View style={[styles.sceneActor, {
+                  transform: [{ translateX: boxPos.x }, { translateY: boxPos.y }],
+                }]}>
+                  <Text style={styles.sceneEmoji}>📦</Text>
+                </Animated.View>
+              )}
+              {measured && (
+                <Animated.View style={[styles.sceneActor, {
+                  transform: [{ translateX: playerPos.x }, { translateY: playerPos.y }],
+                }]}>
+                  <Text style={styles.sceneEmoji}>🧍</Text>
+                  <Text style={styles.sceneTag}>YOU</Text>
+                </Animated.View>
+              )}
+            </View>
+
+            {scenePhase === 'ready' && (
+              <TouchableOpacity style={styles.primary} onPress={beginVisualTask}>
+                <Text style={styles.primaryText}>BEGIN SHIFT</Text>
+              </TouchableOpacity>
+            )}
+            {scenePhase === 'working' && (
+              <Text style={styles.body}>Working... moving the box to the drop zone.</Text>
+            )}
+            {scenePhase === 'done' && (
+              <TouchableOpacity style={styles.primary} onPress={completeVisualShift}>
+                <Text style={styles.primaryText}>COMPLETE SHIFT</Text>
+              </TouchableOpacity>
+            )}
+            {scenePhase === 'complete' && (<>
+              <Text style={styles.body}>Shift complete!</Text>
+              <Text style={styles.body}>
+                You earned ${warehouseShiftPay} in pending wages and {WAREHOUSE_JOB.shiftXp} XP.
+              </Text>
+              <Text style={styles.body}>Pending wages: ${pendingWages}.</Text>
+              <Text style={styles.body}>
+                {day % 7 === FRIDAY ? 'Paid next Friday.' : 'Payable Friday.'}
+              </Text>
+            </>)}
+
+            {scenePhase !== 'complete' ? (
+              <TouchableOpacity
+                style={styles.secondary}
+                onPress={() => setPlace('WORK')}
+              >
+                <Text style={styles.secondaryText}>
+                  {scenePhase === 'ready' ? 'BACK' : 'LEAVE SCENE'}
+                </Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={styles.secondary}
+                onPress={() => setPlace(null)}
+              >
+                <Text style={styles.secondaryText}>BACK TO MAP</Text>
+              </TouchableOpacity>
+            )}
+          </>)}
+          {canWork && shiftDoneToday && (<>
+            <Text style={styles.body}>Shift completed for today. Next shift available tomorrow.</Text>
+            <TouchableOpacity
+              style={styles.secondary}
+              onPress={() => setPlace('WORK')}
+            >
+              <Text style={styles.secondaryText}>BACK TO SHIFT</Text>
+            </TouchableOpacity>
+          </>)}
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  /*
    * WORK SHIFT SCREEN
    * (Locked until paid training ships; the map now routes through the Employment Center.)
    */
@@ -533,7 +758,7 @@ function Game({ initialSave, persistSave }) {
             {!shiftDoneToday ? (
               <TouchableOpacity
                 style={styles.primary}
-                onPress={completeWorkShift}
+                onPress={() => { setScenePhase('ready'); setPlace('WORK_VISUAL'); }}
               >
                 <Text style={styles.primaryText}>
                   WORK A SHIFT — EARN ${warehouseShiftPay} PENDING
@@ -760,60 +985,90 @@ if (place === 'BANK') {
                 Choose where to go next. Visit WORK whenever you
                 want to begin a new shift.
               </Text>
+
+              <Text style={styles.body}>Today is {DAY_NAMES[day % 7]}.</Text>
             </View>
 
             <Text style={styles.sectionTitle}>CITY MAP</Text>
 
-            <View style={styles.grid}>
-              <TouchableOpacity
-                style={styles.placeCard}
-                onPress={() => setPlace('HOME')}
-              >
-                <Text style={styles.placeIcon}>🏠</Text>
-                <Text style={styles.placeName}>HOME</Text>
-                <Text style={styles.placeDesc}>
-                  Rest — advances the calendar one day
-                </Text>
-              </TouchableOpacity>
+            <Text style={styles.sectionTitle}>CITY MAP</Text>
 
+            <View
+              style={styles.city}
+              onLayout={(e) => {
+                const { width, height } = e.nativeEvent.layout;
+                setMapSize((prev) => (
+                  prev.w === width && prev.h === height
+                    ? prev
+                    : { w: width, h: height }
+                ));
+                mapPlayerPos.setValue({ x: 0.46 * width, y: 0.86 * height });
+              }}
+            >
+              <View style={[styles.cityPath, { left: '48%', top: '6%', width: '4%', height: '88%' }]} />
+              <View style={[styles.cityPath, { left: '6%', top: '46%', width: '88%', height: '5%' }]} />
+              <View style={[styles.cityPlaza, { left: '38%', top: '80%' }]}>
+                <Text style={styles.cityTag}>YOU ARE HERE</Text>
+              </View>
               <TouchableOpacity
-                style={styles.placeCard}
-                onPress={() => {
-                  if (employment === 'hired' && training === 'complete') setPlace('WORK');
-                  else setPlace('EMPLOYMENT');
-                }}
+                style={[styles.cityBuilding, { left: '4%', top: '10%' }]}
+                onPress={() => travelTo('HOME')}
+                disabled={!!mapTravel}
               >
-                <Text style={styles.placeIcon}>🏢</Text>
-                <Text style={styles.placeName}>WORK</Text>
-                <Text style={styles.placeDesc}>
+                <Text style={styles.cityEmoji}>🏠</Text>
+                <Text style={styles.cityName}>HOME</Text>
+                <Text style={styles.cityDesc}>Rest — advances the calendar one day</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.cityBuilding, { left: '64%', top: '10%' }]}
+                onPress={() => travelTo('WORK')}
+                disabled={!!mapTravel}
+              >
+                <Text style={styles.cityEmoji}>🏭</Text>
+                <Text style={styles.cityName}>WORK</Text>
+                <Text style={styles.cityDesc}>
                   {employment === 'hired' && training === 'complete'
                     ? 'Work a shift — earn $144 pending'
                     : 'Apply at the Employment Center'}
                 </Text>
               </TouchableOpacity>
-
               <TouchableOpacity
-                style={styles.placeCard}
-                onPress={() => setPlace('BANK')}
+                style={[styles.cityBuilding, { left: '4%', top: '54%' }]}
+                onPress={() => travelTo('BANK')}
+                disabled={!!mapTravel}
               >
-                <Text style={styles.placeIcon}>🏦</Text>
-                <Text style={styles.placeName}>BANK</Text>
-                <Text style={styles.placeDesc}>
-                  Save money and build credit
-                </Text>
+                <Text style={styles.cityEmoji}>🏦</Text>
+                <Text style={styles.cityName}>BANK</Text>
+                <Text style={styles.cityDesc}>Save money and build credit</Text>
               </TouchableOpacity>
-
               <TouchableOpacity
-                style={styles.placeCard}
-                onPress={() => setPlace('STORE')}
+                style={[styles.cityBuilding, { left: '64%', top: '54%' }]}
+                onPress={() => travelTo('STORE')}
+                disabled={!!mapTravel}
               >
-                <Text style={styles.placeIcon}>🏪</Text>
-                <Text style={styles.placeName}>STORE</Text>
-                <Text style={styles.placeDesc}>
-                  Buy food and essentials
-                </Text>
+                <Text style={styles.cityEmoji}>🏪</Text>
+                <Text style={styles.cityName}>STORE</Text>
+                <Text style={styles.cityDesc}>Buy food and essentials</Text>
               </TouchableOpacity>
+              {mapSize.w > 0 && (
+                <Animated.View
+                  pointerEvents="none"
+                  style={[styles.cityActor, {
+                    transform: [{ translateX: mapPlayerPos.x }, { translateY: mapPlayerPos.y }],
+                  }]}
+                >
+                  <Text style={styles.cityEmojiSm}>🧍</Text>
+                  <Text style={styles.cityTag}>YOU</Text>
+                </Animated.View>
+              )}
             </View>
+
+            {mapTravel && (
+              <TouchableOpacity style={styles.secondary} onPress={skipTravel}>
+                <Text style={styles.secondaryText}>SKIP — GO INSIDE</Text>
+              </TouchableOpacity>
+            )}
+
 
             <TouchableOpacity
               style={styles.secondary}
@@ -1027,5 +1282,138 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 8,
     fontSize: 12,
+  },
+
+  scene: {
+    width: '100%',
+    aspectRatio: 16 / 10,
+    backgroundColor: '#1a2433',
+    borderWidth: 1,
+    borderColor: '#2b4668',
+    borderRadius: 16,
+    overflow: 'hidden',
+    marginVertical: 4,
+  },
+
+  sceneShelf: {
+    position: 'absolute',
+    width: '22%',
+    height: '26%',
+    backgroundColor: '#5a4632',
+    borderWidth: 1,
+    borderColor: '#7a6248',
+    borderRadius: 6,
+  },
+
+  sceneDrop: {
+    position: 'absolute',
+    width: '24%',
+    height: '34%',
+    borderWidth: 2,
+    borderColor: GOLD,
+    borderStyle: 'dashed',
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  scenePerson: {
+    position: 'absolute',
+    alignItems: 'center',
+  },
+
+  sceneActor: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    alignItems: 'center',
+  },
+
+  sceneEmoji: {
+    fontSize: 34,
+  },
+
+  sceneTag: {
+    color: '#8fa3bd',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+
+  city: {
+    width: '100%',
+    aspectRatio: 16 / 10,
+    backgroundColor: '#101c2e',
+    borderWidth: 1,
+    borderColor: '#2b4668',
+    borderRadius: 16,
+    overflow: 'hidden',
+    marginVertical: 4,
+  },
+
+  cityPath: {
+    position: 'absolute',
+    backgroundColor: '#2a3a52',
+    borderRadius: 4,
+  },
+
+  cityPlaza: {
+    position: 'absolute',
+    width: '24%',
+    alignItems: 'center',
+    backgroundColor: '#16283f',
+    borderWidth: 1,
+    borderColor: '#2b4668',
+    borderRadius: 8,
+    paddingVertical: 4,
+  },
+
+  cityBuilding: {
+    position: 'absolute',
+    width: '32%',
+    alignItems: 'center',
+    backgroundColor: '#0d1a2a',
+    borderWidth: 1,
+    borderColor: '#243c5b',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+  },
+
+  cityEmoji: {
+    fontSize: 40,
+  },
+
+  cityEmojiSm: {
+    fontSize: 30,
+  },
+
+  cityName: {
+    color: '#ffffff',
+    fontWeight: '900',
+    fontSize: 14,
+    letterSpacing: 1,
+    marginTop: 4,
+  },
+
+  cityDesc: {
+    color: '#8fa3bd',
+    fontSize: 11,
+    textAlign: 'center',
+    marginTop: 2,
+  },
+
+  cityTag: {
+    color: '#8fa3bd',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+
+  cityActor: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    alignItems: 'center',
   },
 });
