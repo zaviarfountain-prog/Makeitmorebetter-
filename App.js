@@ -243,6 +243,7 @@ function Game({ initialSave, persistSave }) {
   const [lastShiftDay, setLastShiftDay] = useState(initialSave.lastShiftDay);
   const [paycheckMessage, setPaycheckMessage] = useState("");
   const collectPayRef = useRef(false);
+  const [benefitsFrom, setBenefitsFrom] = useState(null);
 
   React.useEffect(() => {
     persistSave({ step, cash, savings, credit, xp, place, employment, training, pendingWages, day, paycheck, lastPayday, lastShiftDay });
@@ -434,9 +435,36 @@ function Game({ initialSave, persistSave }) {
             </>) : (<>
               <Text style={styles.body}>Training complete. Pending wages: ${pendingWages}, payable Friday.</Text>
             </>)}
+            <TouchableOpacity style={styles.secondary} onPress={() => { setBenefitsFrom('EMPLOYMENT'); setPlace('EMPLOYMENT_BENEFITS'); }}><Text style={styles.secondaryText}>VIEW BENEFITS</Text></TouchableOpacity>
           </>)}
           {employmentMessage !== '' && (<Text style={styles.body}>{employmentMessage}</Text>)}
           <TouchableOpacity style={styles.secondary} onPress={() => { setEmploymentMessage(''); setPlace(null); }}><Text style={styles.secondaryText}>BACK TO MAP</Text></TouchableOpacity>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  /*
+   * BENEFITS SCREEN - display only. Entry: VIEW BENEFITS on the Employment Center (hired).
+   * Viewing changes nothing: no enrollment, no contributions, no money moves.
+   */
+  if (place === 'EMPLOYMENT_BENEFITS') {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <StatusBar barStyle="light-content" />
+        <ScrollView contentContainerStyle={styles.page}>
+          <Text style={styles.eyebrow}>EMPLOYMENT CENTER</Text>
+          <Text style={styles.title}>Your Benefits</Text>
+          <Text style={styles.body}>Medical</Text>
+          <Text style={styles.body}>Your employer pays 100% of your own medical insurance premium. Coverage options are available for your spouse and children; their premium costs are not yet specified.</Text>
+          <Text style={styles.body}>Dental</Text>
+          <Text style={styles.body}>Your employer pays 100% of your own dental insurance premium.</Text>
+          <Text style={styles.body}>Vision</Text>
+          <Text style={styles.body}>Your employer pays 100% of your own vision insurance premium.</Text>
+          <Text style={styles.body}>401(k)</Text>
+          <Text style={styles.body}>Your employer matches your contributions dollar for dollar, up to 5% of eligible pay. Example: on $1,000 of eligible pay, contribute $50 and your employer adds $50.</Text>
+          <Text style={styles.body}>Benefits information only. Viewing this screen does not enroll you, set contributions, or deduct money.</Text>
+          <TouchableOpacity style={styles.secondary} onPress={() => setPlace(benefitsFrom === 'WORK' ? 'WORK' : 'EMPLOYMENT')}><Text style={styles.secondaryText}>BACK</Text></TouchableOpacity>
         </ScrollView>
       </SafeAreaView>
     );
@@ -529,6 +557,7 @@ function Game({ initialSave, persistSave }) {
             {paycheckMessage !== '' && (
               <Text style={styles.body}>{paycheckMessage}</Text>
             )}
+            <TouchableOpacity style={styles.secondary} onPress={() => { setBenefitsFrom('WORK'); setPlace('EMPLOYMENT_BENEFITS'); }}><Text style={styles.secondaryText}>VIEW BENEFITS</Text></TouchableOpacity>
           </>)}
 
           <TouchableOpacity
