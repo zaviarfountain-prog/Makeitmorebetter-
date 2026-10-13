@@ -225,6 +225,31 @@ export default function App() {
   );
 }
 
+/*
+ * The player's 2D character, drawn with lightweight shapes. Shared by the
+ * city map and the warehouse scene for a consistent look.
+ */
+function PlayerFigure({ shirt = '#e8b93c' }) {
+  return (
+    <View style={pfig.wrap}>
+      <View style={pfig.head} />
+      <View style={[pfig.body, { backgroundColor: shirt }]} />
+      <View style={pfig.legs}>
+        <View style={pfig.leg} />
+        <View style={pfig.leg} />
+      </View>
+    </View>
+  );
+}
+
+const pfig = StyleSheet.create({
+  wrap: { alignItems: 'center', width: 30 },
+  head: { width: 16, height: 16, borderRadius: 8, backgroundColor: '#e8b98a' },
+  body: { width: 22, height: 24, borderRadius: 6, marginTop: 2 },
+  legs: { flexDirection: 'row', width: 22, justifyContent: 'space-between', marginTop: 2 },
+  leg: { width: 8, height: 14, borderRadius: 3, backgroundColor: '#2b3442' },
+});
+
 function Game({ initialSave, persistSave }) {
 
   const [step, setStep] = useState(initialSave.step);
@@ -253,6 +278,12 @@ function Game({ initialSave, persistSave }) {
   const [mapSize, setMapSize] = useState({ w: 0, h: 0 });
   const [reduceMotion, setReduceMotion] = useState(false);
   const mapPlayerPos = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  const walkBob = useRef(new Animated.Value(0)).current;
+  const walkLoop = useRef(null);
+  const stopWalkCycle = () => {
+    if (walkLoop.current) { walkLoop.current.stop(); walkLoop.current = null; }
+    walkBob.setValue(0);
+  };
   const [benefitsFrom, setBenefitsFrom] = useState(null);
 
   React.useEffect(() => {
@@ -392,14 +423,6 @@ function Game({ initialSave, persistSave }) {
       .catch(() => {});
   }, []);
 
-  /* Where each building's door is, as fractions of the measured city scene. */
-  const cityDoors = (w, h) => ({
-    HOME: { x: 0.2 * w, y: 0.24 * h },
-    WORK: { x: 0.8 * w, y: 0.24 * h },
-    BANK: { x: 0.2 * w, y: 0.68 * h },
-    STORE: { x: 0.8 * w, y: 0.68 * h },
-  });
-
   /* Resolve a destination tap to its existing screen (WORK keeps its gates). */
   const resolveDest = (dest) => (
     dest === 'WORK'
@@ -408,8 +431,10 @@ function Game({ initialSave, persistSave }) {
   );
 
   /*
-   * Visual map travel. Presentation only: changes no cash, savings, credit,
-   * XP, wages, or calendar. Ignores taps while walking; SKIP jumps to arrival.
+   * Visual map travel along the sidewalks: plaza -> main street -> side
+   * street -> building door. Never cuts through buildings. Presentation
+   * only: no cash, savings, credit, XP, wages, or calendar changes.
+   * Ignores taps while walking; SKIP jumps straight to arrival.
    */
   const travelTo = (dest) => {
     if (mapTravel) return;
@@ -419,13 +444,30 @@ function Game({ initialSave, persistSave }) {
       setPlace(place);
       return;
     }
-    mapPlayerPos.setValue({ x: 0.46 * w, y: 0.86 * h });
+    const doorX = (dest === 'HOME' || dest === 'BANK' ? 0.19 : 0.81) * w;
+    const doorY = (dest === 'HOME' || dest === 'WORK' ? 0.4 : 0.56) * h;
+    const start = { x: 0.5 * w, y: 0.93 * h };
+    const waypoints = [
+      { x: 0.5 * w, y: 0.4725 * h },
+      { x: doorX, y: 0.4725 * h },
+      { x: doorX, y: doorY },
+    ];
+    mapPlayerPos.setValue(start);
     setMapTravel(dest);
-    Animated.timing(mapPlayerPos, {
-      toValue: cityDoors(w, h)[dest],
-      duration: 900,
-      useNativeDriver: false,
-    }).start(({ finished }) => {
+    walkBob.setValue(0);
+    walkLoop.current = Animated.loop(
+      Animated.sequence([
+        Animated.timing(walkBob, { toValue: -4, duration: 160, useNativeDriver: false }),
+        Animated.timing(walkBob, { toValue: 0, duration: 160, useNativeDriver: false }),
+      ])
+    );
+    walkLoop.current.start();
+    Animated.sequence(
+      waypoints.map((wp) =>
+        Animated.timing(mapPlayerPos, { toValue: wp, duration: 350, useNativeDriver: false })
+      )
+    ).start(({ finished }) => {
+      stopWalkCycle();
       setMapTravel(null);
       if (finished) setPlace(place);
     });
@@ -435,6 +477,7 @@ function Game({ initialSave, persistSave }) {
     if (!mapTravel) return;
     const dest = mapTravel;
     mapPlayerPos.stopAnimation();
+    stopWalkCycle();
     setMapTravel(null);
     setPlace(resolveDest(dest));
   };
@@ -633,7 +676,7 @@ function Game({ initialSave, persistSave }) {
                 <Animated.View style={[styles.sceneActor, {
                   transform: [{ translateX: playerPos.x }, { translateY: playerPos.y }],
                 }]}>
-                  <Text style={styles.sceneEmoji}>🧍</Text>
+                  <PlayerFigure />
                   <Text style={styles.sceneTag}>YOU</Text>
                 </Animated.View>
               )}
@@ -977,19 +1020,11 @@ if (place === 'BANK') {
           </View>
         ) : (
           <>
-            <View style={styles.heroCard}>
+            <View style={styles.cityWelcome}>
               <Text style={styles.eyebrow}>FREE ROAM — ALPHA</Text>
-              <Text style={styles.title}>The City Is Open</Text>
-
-              <Text style={styles.body}>
-                Choose where to go next. Visit WORK whenever you
-                want to begin a new shift.
-              </Text>
-
-              <Text style={styles.body}>Today is {DAY_NAMES[day % 7]}.</Text>
+              <Text style={styles.cityWelcomeTitle}>Sky City</Text>
+              <Text style={styles.body}>Today is {DAY_NAMES[day % 7]}. Tap a building to go inside.</Text>
             </View>
-
-            <Text style={styles.sectionTitle}>CITY MAP</Text>
 
             <Text style={styles.sectionTitle}>CITY MAP</Text>
 
@@ -1002,29 +1037,69 @@ if (place === 'BANK') {
                     ? prev
                     : { w: width, h: height }
                 ));
-                mapPlayerPos.setValue({ x: 0.46 * width, y: 0.86 * height });
+                mapPlayerPos.setValue({ x: 0.5 * width, y: 0.93 * height });
               }}
             >
-              <View style={[styles.cityPath, { left: '48%', top: '6%', width: '4%', height: '88%' }]} />
-              <View style={[styles.cityPath, { left: '6%', top: '46%', width: '88%', height: '5%' }]} />
-              <View style={[styles.cityPlaza, { left: '38%', top: '80%' }]}>
+              <View pointerEvents="none" style={[styles.cityDeco, { left: '38%', top: '12%' }]}>
+                <View style={styles.treeTop} />
+                <View style={styles.treeTrunk} />
+              </View>
+              <View pointerEvents="none" style={[styles.cityDeco, { left: '60%', top: '72%' }]}>
+                <View style={styles.treeTop} />
+                <View style={styles.treeTrunk} />
+              </View>
+              <View pointerEvents="none" style={[styles.cityLamp, { left: '56%', top: '24%' }]}>
+                <View style={styles.lampGlow} />
+                <View style={styles.lampPole} />
+              </View>
+              <View pointerEvents="none" style={[styles.cityLamp, { left: '28%', top: '62%' }]}>
+                <View style={styles.lampGlow} />
+                <View style={styles.lampPole} />
+              </View>
+              <View pointerEvents="none" style={[styles.cityBench, { left: '58%', top: '84%' }]}>
+                <View style={styles.benchSeat} />
+                <View style={styles.benchLegs}>
+                  <View style={styles.benchLeg} />
+                  <View style={styles.benchLeg} />
+                </View>
+              </View>
+              <View pointerEvents="none" style={[styles.cityPath, { left: '48%', top: '4%', width: '4%', height: '92%' }]} />
+              <View pointerEvents="none" style={[styles.cityPath, { left: '4%', top: '45%', width: '92%', height: '4.5%' }]} />
+              <View pointerEvents="none" style={[styles.cityPlaza, { left: '40%', top: '88%' }]}>
                 <Text style={styles.cityTag}>YOU ARE HERE</Text>
               </View>
               <TouchableOpacity
-                style={[styles.cityBuilding, { left: '4%', top: '10%' }]}
+                style={[styles.cityBuilding, { left: '3%', top: '5%' }]}
                 onPress={() => travelTo('HOME')}
                 disabled={!!mapTravel}
               >
-                <Text style={styles.cityEmoji}>🏠</Text>
+                <View style={styles.buildingArt}>
+                  <View style={styles.houseRoof} />
+                  <View style={styles.houseBody}>
+                    <View style={styles.houseWin} />
+                    <View style={styles.houseDoor} />
+                    <View style={styles.houseWin} />
+                  </View>
+                </View>
                 <Text style={styles.cityName}>HOME</Text>
                 <Text style={styles.cityDesc}>Rest — advances the calendar one day</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.cityBuilding, { left: '64%', top: '10%' }]}
+                style={[styles.cityBuilding, { left: '65%', top: '5%' }]}
                 onPress={() => travelTo('WORK')}
                 disabled={!!mapTravel}
               >
-                <Text style={styles.cityEmoji}>🏭</Text>
+                <View style={styles.buildingArt}>
+                  <View style={styles.wareRoof} />
+                  <View style={styles.wareBody}>
+                    <View style={styles.wareDoor} />
+                    <View style={styles.wareDoor} />
+                    <View style={styles.wareBoxes}>
+                      <View style={styles.wareBox} />
+                      <View style={styles.wareBox} />
+                    </View>
+                  </View>
+                </View>
                 <Text style={styles.cityName}>WORK</Text>
                 <Text style={styles.cityDesc}>
                   {employment === 'hired' && training === 'complete'
@@ -1033,20 +1108,44 @@ if (place === 'BANK') {
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.cityBuilding, { left: '4%', top: '54%' }]}
+                style={[styles.cityBuilding, { left: '3%', top: '53%' }]}
                 onPress={() => travelTo('BANK')}
                 disabled={!!mapTravel}
               >
-                <Text style={styles.cityEmoji}>🏦</Text>
+                <View style={styles.buildingArt}>
+                  <View style={styles.bankRoof} />
+                  <View style={styles.bankSign}>
+                    <Text style={styles.bankSignText}>BANK</Text>
+                  </View>
+                  <View style={styles.bankBody}>
+                    <View style={styles.bankCol} />
+                    <View style={styles.bankCol} />
+                    <View style={styles.bankCol} />
+                  </View>
+                  <View style={styles.bankBase} />
+                </View>
                 <Text style={styles.cityName}>BANK</Text>
                 <Text style={styles.cityDesc}>Save money and build credit</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.cityBuilding, { left: '64%', top: '54%' }]}
+                style={[styles.cityBuilding, { left: '65%', top: '53%' }]}
                 onPress={() => travelTo('STORE')}
                 disabled={!!mapTravel}
               >
-                <Text style={styles.cityEmoji}>🏪</Text>
+                <View style={styles.buildingArt}>
+                  <View style={styles.awning}>
+                    <View style={[styles.awnStripe, { backgroundColor: '#c95656' }]} />
+                    <View style={[styles.awnStripe, { backgroundColor: '#f2ede4' }]} />
+                    <View style={[styles.awnStripe, { backgroundColor: '#c95656' }]} />
+                    <View style={[styles.awnStripe, { backgroundColor: '#f2ede4' }]} />
+                    <View style={[styles.awnStripe, { backgroundColor: '#c95656' }]} />
+                    <View style={[styles.awnStripe, { backgroundColor: '#f2ede4' }]} />
+                  </View>
+                  <View style={styles.storeBody}>
+                    <View style={styles.storeWin} />
+                    <View style={styles.storeDoor} />
+                  </View>
+                </View>
                 <Text style={styles.cityName}>STORE</Text>
                 <Text style={styles.cityDesc}>Buy food and essentials</Text>
               </TouchableOpacity>
@@ -1054,15 +1153,17 @@ if (place === 'BANK') {
                 <Animated.View
                   pointerEvents="none"
                   style={[styles.cityActor, {
-                    transform: [{ translateX: mapPlayerPos.x }, { translateY: mapPlayerPos.y }],
+                    transform: [
+                      { translateX: mapPlayerPos.x },
+                      { translateY: Animated.add(mapPlayerPos.y, walkBob) },
+                    ],
                   }]}
                 >
-                  <Text style={styles.cityEmojiSm}>🧍</Text>
+                  <PlayerFigure />
                   <Text style={styles.cityTag}>YOU</Text>
                 </Animated.View>
               )}
             </View>
-
             {mapTravel && (
               <TouchableOpacity style={styles.secondary} onPress={skipTravel}>
                 <Text style={styles.secondaryText}>SKIP — GO INSIDE</Text>
@@ -1415,5 +1516,252 @@ const styles = StyleSheet.create({
     left: 0,
     top: 0,
     alignItems: 'center',
+  },
+
+  cityWelcome: {
+    backgroundColor: '#0d1a2a',
+    borderWidth: 1,
+    borderColor: '#243c5b',
+    borderRadius: 18,
+    padding: 16,
+  },
+
+  cityWelcomeTitle: {
+    color: '#ffffff',
+    fontWeight: '900',
+    fontSize: 24,
+    marginBottom: 8,
+  },
+
+  buildingArt: {
+    height: 104,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+  },
+
+  houseRoof: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 52,
+    borderRightWidth: 52,
+    borderBottomWidth: 34,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderBottomColor: '#8a4b2e',
+  },
+
+  houseBody: {
+    width: 96,
+    height: 62,
+    backgroundColor: '#d9b380',
+    borderRadius: 3,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-around',
+    paddingBottom: 6,
+  },
+
+  houseWin: {
+    width: 18,
+    height: 18,
+    backgroundColor: '#ffe9a8',
+    borderRadius: 2,
+    marginBottom: 14,
+  },
+
+  houseDoor: {
+    width: 22,
+    height: 40,
+    backgroundColor: '#5a3a22',
+    borderRadius: 3,
+  },
+
+  wareRoof: {
+    width: 124,
+    height: 14,
+    backgroundColor: '#525d6e',
+    borderRadius: 3,
+  },
+
+  wareBody: {
+    width: 124,
+    height: 66,
+    backgroundColor: '#7a8699',
+    borderRadius: 3,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-around',
+    paddingBottom: 5,
+  },
+
+  wareDoor: {
+    width: 30,
+    height: 44,
+    backgroundColor: '#3d4450',
+    borderRadius: 2,
+  },
+
+  wareBoxes: {
+    justifyContent: 'flex-end',
+  },
+
+  wareBox: {
+    width: 20,
+    height: 20,
+    backgroundColor: '#b98a4a',
+    borderRadius: 2,
+    marginTop: 2,
+  },
+
+  bankRoof: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 55,
+    borderRightWidth: 55,
+    borderBottomWidth: 26,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderBottomColor: '#9aa5b1',
+  },
+
+  bankSign: {
+    backgroundColor: '#e8b93c',
+    paddingHorizontal: 10,
+    paddingVertical: 2,
+    borderRadius: 3,
+    marginVertical: 3,
+  },
+
+  bankSignText: {
+    color: '#111111',
+    fontWeight: '900',
+    fontSize: 11,
+    letterSpacing: 2,
+  },
+
+  bankBody: {
+    width: 120,
+    height: 46,
+    backgroundColor: '#8e99a6',
+    borderRadius: 3,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-around',
+    paddingBottom: 4,
+  },
+
+  bankCol: {
+    width: 12,
+    height: 40,
+    backgroundColor: '#c7cfd8',
+    borderRadius: 2,
+  },
+
+  bankBase: {
+    width: 124,
+    height: 8,
+    backgroundColor: '#6e7885',
+    borderRadius: 2,
+    marginTop: 2,
+  },
+
+  awning: {
+    flexDirection: 'row',
+    width: 120,
+    height: 16,
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+
+  awnStripe: {
+    flex: 1,
+  },
+
+  storeBody: {
+    width: 120,
+    height: 60,
+    backgroundColor: '#a8b5c4',
+    borderRadius: 3,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-around',
+    paddingBottom: 6,
+  },
+
+  storeWin: {
+    width: 62,
+    height: 32,
+    backgroundColor: '#ffe9a8',
+    borderRadius: 2,
+    marginBottom: 6,
+  },
+
+  storeDoor: {
+    width: 22,
+    height: 42,
+    backgroundColor: '#4a5560',
+    borderRadius: 2,
+  },
+
+  cityDeco: {
+    position: 'absolute',
+    alignItems: 'center',
+  },
+
+  treeTop: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#2f7a3d',
+  },
+
+  treeTrunk: {
+    width: 8,
+    height: 14,
+    backgroundColor: '#6b4a2f',
+    marginTop: -4,
+  },
+
+  cityLamp: {
+    position: 'absolute',
+    alignItems: 'center',
+  },
+
+  lampGlow: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#ffe9a8',
+  },
+
+  lampPole: {
+    width: 5,
+    height: 34,
+    backgroundColor: '#3a4656',
+    marginTop: -2,
+  },
+
+  cityBench: {
+    position: 'absolute',
+    alignItems: 'center',
+  },
+
+  benchSeat: {
+    width: 44,
+    height: 8,
+    backgroundColor: '#8a5f3c',
+    borderRadius: 3,
+  },
+
+  benchLegs: {
+    flexDirection: 'row',
+    width: 36,
+    justifyContent: 'space-between',
+  },
+
+  benchLeg: {
+    width: 5,
+    height: 10,
+    backgroundColor: '#5a3d24',
   },
 });
