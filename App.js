@@ -6,6 +6,7 @@ import {
   ScrollView,
   StyleSheet,
   TouchableOpacity,
+  Pressable,
   Text,
   View,
   Animated,
@@ -119,7 +120,7 @@ const Stat = ({ label, value, accent, onPress }) => (
 const SKY_SAVE_KEY = "skys-limit-save-v1";
 const SKY_INITIAL = {
   step: 0, cash: 2500, savings: 0,
-  credit: 575, xp: 0, place: null, employment: 'none',
+  credit: 575, xp: 0, coins: 0, place: null, employment: 'none',
   training: 'incomplete', pendingWages: 0,
   day: 0, paycheck: 0, lastPayday: -1, lastShiftDay: -1
 };
@@ -170,6 +171,9 @@ export default function App() {
             saved.training = "incomplete";
           if (!Number.isFinite(saved.pendingWages) || saved.pendingWages < 0)
             saved.pendingWages = 0;
+          /* Coins are new: older saves load with 0 coins, all else preserved. */
+          if (!Number.isFinite(saved.coins) || saved.coins < 0)
+            saved.coins = 0;
           /* Payroll fields are optional: older saves start Monday with empty payroll. */
           if (!Number.isInteger(saved.day) || saved.day < 0)
             saved.day = 0;
@@ -257,6 +261,7 @@ function Game({ initialSave, persistSave }) {
   const [savings, setSavings] = useState(initialSave.savings);
   const [credit, setCredit] = useState(initialSave.credit);
   const [xp, setXp] = useState(initialSave.xp);
+  const [coins, setCoins] = useState(initialSave.coins);
   const [place, setPlace] = useState(initialSave.place);
   const [employment, setEmployment] = useState(initialSave.employment);
   const [employmentMessage, setEmploymentMessage] = useState("");
@@ -288,8 +293,8 @@ function Game({ initialSave, persistSave }) {
   const [benefitsFrom, setBenefitsFrom] = useState(null);
 
   React.useEffect(() => {
-    persistSave({ step, cash, savings, credit, xp, place, employment, training, pendingWages, day, paycheck, lastPayday, lastShiftDay });
-  }, [step, cash, savings, credit, xp, place, employment, training, pendingWages, day, paycheck, lastPayday, lastShiftDay, persistSave]);
+    persistSave({ step, cash, savings, credit, xp, coins, place, employment, training, pendingWages, day, paycheck, lastPayday, lastShiftDay });
+  }, [step, cash, savings, credit, xp, coins, place, employment, training, pendingWages, day, paycheck, lastPayday, lastShiftDay, persistSave]);
 
   /*
    * Friday payroll cutover: on entering Friday, move wages accrued before
@@ -483,6 +488,9 @@ function Game({ initialSave, persistSave }) {
    */
   const travelTo = (dest) => {
     if (mapTravel) return;
+    mapPlayerPos.stopAnimation();
+    stopWalkCycle();
+    freeWalkRef.current = false;
     const place = resolveDest(dest);
     const { w, h } = mapSize;
     if (reduceMotion || w === 0) {
@@ -525,6 +533,48 @@ function Game({ initialSave, persistSave }) {
     stopWalkCycle();
     setMapTravel(null);
     setPlace(resolveDest(dest));
+  };
+
+  /*
+   * Tap-anywhere movement: tap a spot on the map and the character walks
+   * there. Building taps keep travelTo and interrupt a free walk.
+   * Presentation only: no cash, savings, credit, XP, wages, or calendar changes.
+   */
+  const freeWalkRef = useRef(false);
+  const mapViewRef = useRef(null);
+  const freeMoveTo = (x, y) => {
+    if (mapTravel) return;
+    const { w, h } = mapSize;
+    if (w === 0 || !Number.isFinite(x) || !Number.isFinite(y)) return;
+    const tx = Math.min(Math.max(x, 10), w - 10);
+    const ty = Math.min(Math.max(y, 10), h - 10);
+    mapPlayerPos.stopAnimation();
+    stopWalkCycle();
+    if (reduceMotion) {
+      /* Reduced motion: move instantly, never silently ignore the tap. */
+      freeWalkRef.current = false;
+      mapPlayerPos.setValue({ x: tx, y: ty });
+      return;
+    }
+    freeWalkRef.current = true;
+    walkBob.setValue(0);
+    walkLoop.current = Animated.loop(
+      Animated.sequence([
+        Animated.timing(walkBob, { toValue: -4, duration: 160, useNativeDriver: false }),
+        Animated.timing(walkBob, { toValue: 0, duration: 160, useNativeDriver: false }),
+      ])
+    );
+    walkLoop.current.start();
+    Animated.timing(mapPlayerPos, {
+      toValue: { x: tx, y: ty },
+      duration: 450,
+      useNativeDriver: false,
+    }).start(({ finished }) => {
+      if (finished) {
+        stopWalkCycle();
+        freeWalkRef.current = false;
+      }
+    });
   };
 
   /* Application + hiring (prototype: guaranteed hire). No stat changes. */
@@ -576,6 +626,7 @@ function Game({ initialSave, persistSave }) {
     setSavings(0);
     setCredit(575);
     setXp(0);
+    setCoins(0);
     setEmployment('none');
     setEmploymentMessage('');
     setTraining('incomplete');
@@ -837,10 +888,10 @@ function Game({ initialSave, persistSave }) {
             <TouchableOpacity style={styles.primary} onPress={completeTraining}><Text style={styles.primaryText}>COMPLETE TRAINING</Text></TouchableOpacity>
           </>)}
           {training === 'complete' && (<>
-            <Text style={styles.body}>Training complete. Pending wages: ${pendingWages}, payable Friday.</Text>
+            <Text style={styles.body}>{'Training complete. Pending wages: $' + pendingWages + ', payable Friday.'}</Text>
           </>)}
           {trainingMessage !== '' && (<Text style={styles.body}>{trainingMessage}</Text>)}
-          <Text style={styles.body}>${warehouseTrainingPay} earned toward Friday pay. Payment is pending; Friday payroll arrives in a later update.</Text>
+          <Text style={styles.body}>{'$' + warehouseTrainingPay + ' training pay added to pending wages. Paid out with Friday payroll.'}</Text>
           <TouchableOpacity style={styles.secondary} onPress={() => { setTrainingMessage(''); setPlace('EMPLOYMENT'); }}><Text style={styles.secondaryText}>BACK TO EMPLOYMENT CENTER</Text></TouchableOpacity>
         </ScrollView>
       </SafeAreaView>
@@ -1068,6 +1119,13 @@ if (place === 'BANK') {
             accent={PURPLE}
             onPress={() => alert(`XP: ${xp}`)}
           />
+
+          <Stat
+            label="COINS"
+            value={coins}
+            accent={GOLD}
+            onPress={() => alert(`Coin balance: ${coins}`)}
+          />
         </View>
 
         <View style={styles.progressTrack}>
@@ -1105,6 +1163,7 @@ if (place === 'BANK') {
             <Text style={styles.sectionTitle}>CITY MAP</Text>
 
             <View
+              ref={mapViewRef}
               style={styles.city}
               onLayout={(e) => {
                 const { width, height } = e.nativeEvent.layout;
@@ -1116,6 +1175,23 @@ if (place === 'BANK') {
                 mapPlayerPos.setValue({ x: 0.5 * width, y: 0.93 * height });
               }}
             >
+              <Pressable
+                style={StyleSheet.absoluteFill}
+                onPress={(e) => {
+                  const n = e.nativeEvent || {};
+                  if (Number.isFinite(n.locationX) && Number.isFinite(n.locationY)) {
+                    freeMoveTo(n.locationX, n.locationY);
+                    return;
+                  }
+                  /* Web: press events carry a MouseEvent (no locationX/Y).
+                     Derive map coordinates from the page position instead. */
+                  if (mapViewRef.current && Number.isFinite(n.pageX) && Number.isFinite(n.pageY)) {
+                    mapViewRef.current.measure((fx, fy, w, h, px, py) => {
+                      freeMoveTo(n.pageX - px, n.pageY - py);
+                    });
+                  }
+                }}
+              />
               <View pointerEvents="none" style={[styles.cityDeco, { left: '38%', top: '12%' }]}>
                 <View style={styles.treeTop} />
                 <View style={styles.treeTrunk} />
