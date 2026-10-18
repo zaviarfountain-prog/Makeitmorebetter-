@@ -670,7 +670,7 @@ function Game({ initialSave, persistSave }) {
               <Text style={styles.body}>Paid training must be completed before you can work.</Text>
               <TouchableOpacity style={styles.primary} onPress={() => setPlace('EMPLOYMENT_TRAINING')}><Text style={styles.primaryText}>START PAID TRAINING</Text></TouchableOpacity>
             </>) : (<>
-              <Text style={styles.body}>Training complete. Pending wages: ${pendingWages}, payable Friday.</Text>
+              <Text style={styles.body}>{'Training complete. Pending wages: $' + pendingWages + ', payable Friday.'}</Text>
             </>)}
             <TouchableOpacity style={styles.secondary} onPress={() => { setBenefitsFrom('EMPLOYMENT'); setPlace('EMPLOYMENT_BENEFITS'); }}><Text style={styles.secondaryText}>VIEW BENEFITS</Text></TouchableOpacity>
           </>)}
@@ -825,9 +825,9 @@ function Game({ initialSave, persistSave }) {
             {scenePhase === 'complete' && (<>
               <Text style={styles.body}>Shift complete!</Text>
               <Text style={styles.body}>
-                You earned ${warehouseShiftPay} in pending wages and {WAREHOUSE_JOB.shiftXp} XP.
+                {'You earned $' + warehouseShiftPay + ' in pending wages and ' + WAREHOUSE_JOB.shiftXp + ' XP.'}
               </Text>
-              <Text style={styles.body}>Pending wages: ${pendingWages}.</Text>
+              <Text style={styles.body}>{'Pending wages: $' + pendingWages + '.'}</Text>
               <Text style={styles.body}>
                 {day % 7 === FRIDAY ? 'Paid next Friday.' : 'Payable Friday.'}
               </Text>
@@ -881,8 +881,8 @@ function Game({ initialSave, persistSave }) {
           <Text style={styles.eyebrow}>EMPLOYMENT CENTER</Text>
           <Text style={styles.title}>{WAREHOUSE_JOB.title} - Paid Training</Text>
           <Text style={styles.body}>Duration: {WAREHOUSE_JOB.trainingHours} in-game hours</Text>
-          <Text style={styles.body}>Rate: ${WAREHOUSE_JOB.trainingRate}/hour</Text>
-          <Text style={styles.body}>Training earnings: ${warehouseTrainingPay}, payable Friday</Text>
+          <Text style={styles.body}>{'Rate: $' + WAREHOUSE_JOB.trainingRate + '/hour'}</Text>
+          <Text style={styles.body}>{'Training earnings: $' + warehouseTrainingPay + ', payable Friday'}</Text>
           <Text style={styles.body}>No fee</Text>
           {training === 'incomplete' && employment === 'hired' && (<>
             <TouchableOpacity style={styles.primary} onPress={completeTraining}><Text style={styles.primaryText}>COMPLETE TRAINING</Text></TouchableOpacity>
@@ -919,11 +919,11 @@ function Game({ initialSave, persistSave }) {
 
           {canWork && (<>
             <Text style={styles.body}>
-              Complete one {WAREHOUSE_JOB.shiftHours}-hour shift to earn ${warehouseShiftPay} in pending wages and {WAREHOUSE_JOB.shiftXp} XP. Wages pay out on Friday.
+              {'Complete one ' + WAREHOUSE_JOB.shiftHours + '-hour shift to earn $' + warehouseShiftPay + ' in pending wages and ' + WAREHOUSE_JOB.shiftXp + ' XP. Wages pay out on Friday.'}
             </Text>
 
-            <Text style={styles.body}>Pending wages: ${pendingWages}</Text>
-            <Text style={styles.body}>Available paycheck: ${paycheck}</Text>
+            <Text style={styles.body}>{'Pending wages: $' + pendingWages}</Text>
+            <Text style={styles.body}>{'Available paycheck: $' + paycheck}</Text>
 
             {!shiftDoneToday ? (
               <TouchableOpacity
@@ -931,7 +931,7 @@ function Game({ initialSave, persistSave }) {
                 onPress={() => { setScenePhase('ready'); setPlace('WORK_VISUAL'); }}
               >
                 <Text style={styles.primaryText}>
-                  WORK A SHIFT — EARN ${warehouseShiftPay} PENDING
+                  {'WORK A SHIFT — EARN $' + warehouseShiftPay + ' PENDING'}
                 </Text>
               </TouchableOpacity>
             ) : (
@@ -944,7 +944,7 @@ function Game({ initialSave, persistSave }) {
                 onPress={collectPaycheck}
               >
                 <Text style={styles.primaryText}>
-                  COLLECT PAYCHECK — ${paycheck}
+                  {'COLLECT PAYCHECK — $' + paycheck}
                 </Text>
               </TouchableOpacity>
             )}
@@ -1016,8 +1016,8 @@ if (place === 'BANK') {
                     <ScrollView>
                             <Text style={styles.title}>BANK</Text>
 
-                                    <Text style={styles.body}>Cash: ${cash}</Text>
-                                            <Text style={styles.body}>Savings: ${savings}</Text>
+                                    <Text style={styles.body}>{'Cash: $' + cash}</Text>
+                                            <Text style={styles.body}>{'Savings: $' + savings}</Text>
                                                     <Text style={styles.body}>Credit: {credit}</Text>
 
                                                             <TouchableOpacity
