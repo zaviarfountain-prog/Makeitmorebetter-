@@ -122,7 +122,7 @@ const SKY_INITIAL = {
   step: 0, cash: 2500, savings: 0,
   credit: 575, xp: 0, coins: 0, place: null, employment: 'none',
   training: 'incomplete', pendingWages: 0,
-  day: 0, paycheck: 0, lastPayday: -1, lastShiftDay: -1
+  day: 0, paycheck: 0, lastPayday: -1, lastShiftDay: -1, housing: 'none'
 };
 
 /* Warehouse Associate: first job. Duration + pay stay together so future jobs can reuse training. */
@@ -136,6 +136,14 @@ const WAREHOUSE_JOB = {
 };
 const warehouseTrainingPay = WAREHOUSE_JOB.trainingHours * WAREHOUSE_JOB.trainingRate;
 const warehouseShiftPay = WAREHOUSE_JOB.shiftHours * WAREHOUSE_JOB.shiftRate;
+/* HOUSING_SLICE_V1: first player goal. Room Rental -- East Oakland,
+ * $700 first month's rent (intro card). Paid from savings; monthly
+ * billing is a parked future system. */
+const HOUSING_GOAL = {
+  key: 'room_rental',
+  name: 'Room Rental \u2014 East Oakland',
+  firstMonthRent: 700,
+};
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const FRIDAY = 4;
 
@@ -183,6 +191,9 @@ export default function App() {
             saved.lastPayday = -1;
           if (!Number.isInteger(saved.lastShiftDay))
             saved.lastShiftDay = -1;
+          /* Housing is new: older saves load with no stable housing. */
+          if (saved.housing === undefined || !["none", "room_rental"].includes(saved.housing))
+            saved.housing = "none";
           /* Old saves may have the shift screen open; shifts now need training first. */
           if (saved.place === "WORK")
             saved.place = null;
@@ -273,6 +284,9 @@ function Game({ initialSave, persistSave }) {
   const [paycheck, setPaycheck] = useState(initialSave.paycheck);
   const [lastPayday, setLastPayday] = useState(initialSave.lastPayday);
   const [lastShiftDay, setLastShiftDay] = useState(initialSave.lastShiftDay);
+  const [housing, setHousing] = useState(initialSave.housing);
+  const [housingMessage, setHousingMessage] = useState("");
+  const [housingConfirm, setHousingConfirm] = useState(false);
   const [paycheckMessage, setPaycheckMessage] = useState("");
   const collectPayRef = useRef(false);
   const [scenePhase, setScenePhase] = useState('ready');
@@ -293,8 +307,8 @@ function Game({ initialSave, persistSave }) {
   const [benefitsFrom, setBenefitsFrom] = useState(null);
 
   React.useEffect(() => {
-    persistSave({ step, cash, savings, credit, xp, coins, place, employment, training, pendingWages, day, paycheck, lastPayday, lastShiftDay });
-  }, [step, cash, savings, credit, xp, coins, place, employment, training, pendingWages, day, paycheck, lastPayday, lastShiftDay, persistSave]);
+    persistSave({ step, cash, savings, credit, xp, coins, place, employment, training, pendingWages, day, paycheck, lastPayday, lastShiftDay, housing });
+  }, [step, cash, savings, credit, xp, coins, place, employment, training, pendingWages, day, paycheck, lastPayday, lastShiftDay, housing, persistSave]);
 
   /*
    * Friday payroll cutover: on entering Friday, move wages accrued before
@@ -616,6 +630,22 @@ function Game({ initialSave, persistSave }) {
     setPaycheckMessage('Paycheck collected: $' + paycheck + ' added to cash.');
   };
 
+  /*
+   * HOUSING_SLICE_V1: sign the lease. Pays the $700 first month's rent
+   * from savings exactly once. Insufficient savings changes nothing.
+   */
+  const signLease = () => {
+    if (housing !== 'none') return;
+    if (savings < HOUSING_GOAL.firstMonthRent) {
+      setHousingMessage('Not enough saved yet. You need $' + (HOUSING_GOAL.firstMonthRent - savings) + ' more in savings.');
+      return;
+    }
+    setSavings((v) => v - HOUSING_GOAL.firstMonthRent);
+    setHousing(HOUSING_GOAL.key);
+    setHousingConfirm(false);
+    setHousingMessage('Lease signed! ' + HOUSING_GOAL.name + ' is yours \u2014 first month paid from savings.');
+  };
+
   const restartGame = () => {
     paidWorkShiftRef.current = false;
     lastAdvancedStepRef.current = -1;
@@ -639,6 +669,9 @@ function Game({ initialSave, persistSave }) {
     setLastShiftDay(-1);
     setPaycheckMessage('');
     collectPayRef.current = false;
+    setHousing('none');
+    setHousingMessage('');
+    setHousingConfirm(false);
   };
  
   /*
@@ -993,6 +1026,40 @@ function Game({ initialSave, persistSave }) {
               REST — WAKE UP {tomorrow.toUpperCase()}
             </Text>
           </TouchableOpacity>
+
+          {/* HOUSING_SLICE_V1: first goal -- earn and save toward a place to live. */}
+          <Text style={styles.eyebrow}>HOUSING GOAL</Text>
+          {housing === 'none' ? (<>
+            <Text style={styles.title}>A Place to Live</Text>
+            <Text style={styles.body}>{HOUSING_GOAL.name}</Text>
+            <Text style={styles.body}>{'First month\u2019s rent: $' + HOUSING_GOAL.firstMonthRent + ' (from savings)'}</Text>
+            <Text style={styles.body}>{'Saved $' + Math.min(savings, HOUSING_GOAL.firstMonthRent) + ' of $' + HOUSING_GOAL.firstMonthRent}</Text>
+            <View style={{ height: 10, backgroundColor: '#1c2a3a', borderRadius: 5, overflow: 'hidden' }}>
+              <View style={{ height: 10, width: Math.min(100, Math.round((savings / HOUSING_GOAL.firstMonthRent) * 100)) + '%', backgroundColor: GOLD }} />
+            </View>
+            {savings >= HOUSING_GOAL.firstMonthRent ? (<>
+              {housingConfirm ? (<>
+                <Text style={styles.body}>{'Pay $' + HOUSING_GOAL.firstMonthRent + ' from savings for the first month\u2019s rent?'}</Text>
+                <TouchableOpacity style={styles.primary} onPress={signLease}>
+                  <Text style={styles.primaryText}>CONFIRM — SIGN LEASE</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.secondary} onPress={() => { setHousingConfirm(false); setHousingMessage(''); }}>
+                  <Text style={styles.secondaryText}>CANCEL</Text>
+                </TouchableOpacity>
+              </>) : (
+                <TouchableOpacity style={styles.primary} onPress={() => { setHousingMessage(''); setHousingConfirm(true); }}>
+                  <Text style={styles.primaryText}>SIGN LEASE — PAY $700</Text>
+                </TouchableOpacity>
+              )}
+            </>) : (
+              <Text style={styles.body}>{'Work warehouse shifts, collect your Friday paycheck, and deposit cash at the BANK. You need $' + (HOUSING_GOAL.firstMonthRent - savings) + ' more in savings.'}</Text>
+            )}
+            {housingMessage !== '' && (<Text style={styles.body}>{housingMessage}</Text>)}
+          </>) : (<>
+            <Text style={styles.title}>You\u2019re Housed</Text>
+            <Text style={styles.body}>{'Current housing: ' + HOUSING_GOAL.name}</Text>
+            <Text style={styles.body}>First month\u2019s rent paid from savings.</Text>
+          </>)}
 
           <TouchableOpacity
             style={styles.secondary}
