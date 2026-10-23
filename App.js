@@ -121,21 +121,34 @@ const SKY_SAVE_KEY = "skys-limit-save-v1";
 const SKY_INITIAL = {
   step: 0, cash: 2500, savings: 0,
   credit: 575, xp: 0, coins: 0, place: null, employment: 'none',
-  training: 'incomplete', pendingWages: 0,
-  day: 0, paycheck: 0, lastPayday: -1, lastShiftDay: -1, housing: 'none'
+  training: 'incomplete', pendingWages: 0, goalsDone: [],
+  day: 0, paycheck: 0, lastPayday: -1, lastShiftDay: -1, housing: 'none', jobId: 'none'
 };
 
-/* Warehouse Associate: first job. Duration + pay stay together so future jobs can reuse training. */
-const WAREHOUSE_JOB = {
-  title: 'Warehouse Associate',
-  trainingHours: 8,
-  trainingRate: 18,
-  shiftHours: 8,
-  shiftRate: 18,
-  shiftXp: 40,
+/* JOBS_V1: every job shares one flow -- apply, hired, paid mandatory
+ * training, work shifts, Friday paycheck. Warehouse Associate is the
+ * original private-business job; City Hall Clerk is the city-government
+ * job. PROPOSED RATES (flagged, not established): clerk $20/hr, a step
+ * up from warehouse $18/hr. Change numbers here; screens compute from
+ * this table. */
+const JOBS = {
+  warehouse: {
+    id: 'warehouse',
+    title: 'Warehouse Associate',
+    kind: 'Private business',
+    trainingHours: 8, trainingRate: 18,
+    shiftHours: 8, shiftRate: 18, shiftXp: 40,
+    visualShift: true,
+  },
+  cityhall: {
+    id: 'cityhall',
+    title: 'City Hall Clerk',
+    kind: 'City government',
+    trainingHours: 8, trainingRate: 20,
+    shiftHours: 8, shiftRate: 20, shiftXp: 40,
+    visualShift: false,
+  },
 };
-const warehouseTrainingPay = WAREHOUSE_JOB.trainingHours * WAREHOUSE_JOB.trainingRate;
-const warehouseShiftPay = WAREHOUSE_JOB.shiftHours * WAREHOUSE_JOB.shiftRate;
 /* HOUSING_SLICE_V1: first player goal. Room Rental -- East Oakland,
  * $700 first month's rent (intro card). Paid from savings; monthly
  * billing is a parked future system. */
@@ -144,6 +157,27 @@ const HOUSING_GOAL = {
   name: 'Room Rental \u2014 East Oakland',
   firstMonthRent: 700,
 };
+/* GOAL_LADDER_V1: Lori's five life goals after housing. Targets track the
+ * current savings balance / credit score; completing a goal spends
+ * nothing. Completion latches (see goalsDone): once met, a goal stays
+ * met even if the balance later drops. */
+const LIFE_GOALS = [
+  { id: 'breathing_room', name: 'A Little Breathing Room', kind: 'savings', target: 500,
+    targetText: 'Have $500 in savings.',
+    doneText: "Rent handled, cushion started\u2014you've got room to breathe!" },
+  { id: 'building_name', name: 'Building Your Name', kind: 'credit', target: 580,
+    targetText: 'Reach a credit score of 580.',
+    doneText: "You're building more than a balance\u2014you're building your name!" },
+  { id: 'first_thousand', name: 'Your First Thousand', kind: 'savings', target: 1000,
+    targetText: 'Have $1,000 in savings.',
+    doneText: "A thousand put away\u2014that's hard work you can count!" },
+  { id: 'solid_ground', name: 'Solid Ground', kind: 'savings', target: 2000,
+    targetText: 'Have $2,000 in savings.',
+    doneText: "You've got a roof and a cushion\u2014now you're standing on solid ground!" },
+  { id: 'skys_limit', name: "Sky's the Limit", kind: 'savings', target: 3000,
+    targetText: 'Have $3,000 in savings.',
+    doneText: "From getting housed to getting ahead\u2014look how far you've come!" },
+];
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const FRIDAY = 4;
 
@@ -194,6 +228,15 @@ export default function App() {
           /* Housing is new: older saves load with no stable housing. */
           if (saved.housing === undefined || !["none", "room_rental"].includes(saved.housing))
             saved.housing = "none";
+          /* Goal ladder is new: older saves start with no goals latched;
+           * anything already met latches on the next balance check. */
+          if (!Array.isArray(saved.goalsDone))
+            saved.goalsDone = [];
+          saved.goalsDone = saved.goalsDone.filter((id) =>
+            ["breathing_room", "building_name", "first_thousand", "solid_ground", "skys_limit"].includes(id));
+          /* Job choice is new: saves from before it were warehouse-only. */
+          if (saved.jobId === undefined || !["none", "warehouse", "cityhall"].includes(saved.jobId))
+            saved.jobId = saved.employment === 'none' ? 'none' : 'warehouse';
           /* Old saves may have the shift screen open; shifts now need training first. */
           if (saved.place === "WORK")
             saved.place = null;
@@ -286,7 +329,14 @@ function Game({ initialSave, persistSave }) {
   const [lastShiftDay, setLastShiftDay] = useState(initialSave.lastShiftDay);
   const [housing, setHousing] = useState(initialSave.housing);
   const [housingMessage, setHousingMessage] = useState("");
+  const [goalsDone, setGoalsDone] = useState(initialSave.goalsDone);
   const [housingConfirm, setHousingConfirm] = useState(false);
+  const [jobId, setJobId] = useState(initialSave.jobId);
+  const [shiftMessage, setShiftMessage] = useState("");
+  /* JOBS_V1: the player's chosen job; warehouse fallback for safety. */
+  const activeJob = JOBS[jobId] || JOBS.warehouse;
+  const jobTrainingPay = activeJob.trainingHours * activeJob.trainingRate;
+  const jobShiftPay = activeJob.shiftHours * activeJob.shiftRate;
   const [paycheckMessage, setPaycheckMessage] = useState("");
   const collectPayRef = useRef(false);
   const [scenePhase, setScenePhase] = useState('ready');
@@ -307,8 +357,20 @@ function Game({ initialSave, persistSave }) {
   const [benefitsFrom, setBenefitsFrom] = useState(null);
 
   React.useEffect(() => {
-    persistSave({ step, cash, savings, credit, xp, coins, place, employment, training, pendingWages, day, paycheck, lastPayday, lastShiftDay, housing });
-  }, [step, cash, savings, credit, xp, coins, place, employment, training, pendingWages, day, paycheck, lastPayday, lastShiftDay, housing, persistSave]);
+    persistSave({ step, cash, savings, credit, xp, coins, place, employment, training, pendingWages, day, paycheck, lastPayday, lastShiftDay, housing, goalsDone, jobId });
+  }, [step, cash, savings, credit, xp, coins, place, employment, training, pendingWages, day, paycheck, lastPayday, lastShiftDay, housing, goalsDone, jobId, persistSave]);
+
+  /* GOAL_LADDER_V1: latch newly met life goals. Only counts after the
+   * lease is signed; existing progress (e.g. credit) counts too. */
+  React.useEffect(() => {
+    if (housing !== 'room_rental') return;
+    const met = LIFE_GOALS.filter(
+      (g) => !goalsDone.includes(g.id) && (g.kind === 'credit' ? credit : savings) >= g.target
+    );
+    if (met.length > 0) {
+      setGoalsDone((prev) => [...prev, ...met.map((g) => g.id)]);
+    }
+  }, [savings, credit, housing, goalsDone]);
 
   /*
    * Friday payroll cutover: on entering Friday, move wages accrued before
@@ -397,8 +459,8 @@ function Game({ initialSave, persistSave }) {
 
     paidWorkShiftRef.current = true;
 
-    setPendingWages((v) => v + warehouseShiftPay);
-    setXp((v) => v + WAREHOUSE_JOB.shiftXp);
+    setPendingWages((v) => v + jobShiftPay);
+    setXp((v) => v + activeJob.shiftXp);
     setLastShiftDay(day);
     return true;
   };
@@ -592,10 +654,12 @@ function Game({ initialSave, persistSave }) {
   };
 
   /* Application + hiring (prototype: guaranteed hire). No stat changes. */
-  const applyForJob = () => {
+  const applyForJob = (id) => {
     if (employment !== 'none') return;
+    if (!JOBS[id]) return;
+    setJobId(id);
     setEmployment('applied');
-    setEmploymentMessage('Application submitted. Check your hiring result.');
+    setEmploymentMessage('Application submitted for ' + JOBS[id].title + '. Check your hiring result.');
   };
   const checkHiringResult = () => {
     if (employment !== 'applied') return;
@@ -609,12 +673,13 @@ function Game({ initialSave, persistSave }) {
     trainingPaidRef.current = true;
     setTraining('complete');
     setEmploymentMessage('');
-    setPendingWages((v) => v + warehouseTrainingPay);
-    setTrainingMessage('Training complete. You earned $' + warehouseTrainingPay + ', payable Friday.');
+    setPendingWages((v) => v + jobTrainingPay);
+    setTrainingMessage('Training complete. You earned $' + jobTrainingPay + ', payable Friday.');
   };
   /* Rest at HOME advances the in-game calendar by one day and re-arms the daily shift. */
   const restDay = () => {
     paidWorkShiftRef.current = false;
+    setShiftMessage('');
     setDay((d) => d + 1);
   };
 
@@ -658,6 +723,7 @@ function Game({ initialSave, persistSave }) {
     setXp(0);
     setCoins(0);
     setEmployment('none');
+    setJobId('none');
     setEmploymentMessage('');
     setTraining('incomplete');
     setPendingWages(0);
@@ -670,6 +736,7 @@ function Game({ initialSave, persistSave }) {
     setPaycheckMessage('');
     collectPayRef.current = false;
     setHousing('none');
+    setGoalsDone([]);
     setHousingMessage('');
     setHousingConfirm(false);
   };
@@ -684,13 +751,20 @@ function Game({ initialSave, persistSave }) {
         <StatusBar barStyle="light-content" />
         <ScrollView contentContainerStyle={styles.page}>
           <Text style={styles.eyebrow}>EMPLOYMENT CENTER</Text>
-          <Text style={styles.title}>Warehouse Associate</Text>
+          <Text style={styles.title}>{employment === 'none' ? 'Choose Your Job' : activeJob.title}</Text>
           {employment === 'none' && (<>
             <Text style={styles.body}>Apply to begin your career. Once hired, you must complete paid training before working.</Text>
-            <TouchableOpacity style={styles.primary} onPress={applyForJob}><Text style={styles.primaryText}>APPLY FOR JOB</Text></TouchableOpacity>
+            <Text style={styles.eyebrow}>PRIVATE BUSINESS</Text>
+            <Text style={styles.body}>Warehouse Associate</Text>
+            <Text style={styles.body}>{'$' + JOBS.warehouse.shiftRate + '/hour \u2022 ' + JOBS.warehouse.shiftHours + '-hour shift. Each completed shift earns $' + (JOBS.warehouse.shiftHours * JOBS.warehouse.shiftRate) + ' and ' + JOBS.warehouse.shiftXp + ' XP.'}</Text>
+            <TouchableOpacity style={styles.primary} onPress={() => applyForJob('warehouse')}><Text style={styles.primaryText}>APPLY — WAREHOUSE ASSOCIATE</Text></TouchableOpacity>
+            <Text style={styles.eyebrow}>CITY GOVERNMENT</Text>
+            <Text style={styles.body}>City Hall Clerk</Text>
+            <Text style={styles.body}>{'$' + JOBS.cityhall.shiftRate + '/hour \u2022 ' + JOBS.cityhall.shiftHours + '-hour shift. Each completed shift earns $' + (JOBS.cityhall.shiftHours * JOBS.cityhall.shiftRate) + ' and ' + JOBS.cityhall.shiftXp + ' XP.'}</Text>
+            <TouchableOpacity style={styles.primary} onPress={() => applyForJob('cityhall')}><Text style={styles.primaryText}>APPLY — CITY HALL CLERK</Text></TouchableOpacity>
           </>)}
           {employment === 'applied' && (<>
-            <Text style={styles.body}>Your application is in. Check your hiring result below.</Text>
+            <Text style={styles.body}>{'Your application for ' + activeJob.title + ' is in. Check your hiring result below.'}</Text>
             <TouchableOpacity style={styles.primary} onPress={checkHiringResult}><Text style={styles.primaryText}>CHECK HIRING RESULT</Text></TouchableOpacity>
           </>)}
           {employment === 'hired' && (<>
@@ -731,6 +805,11 @@ function Game({ initialSave, persistSave }) {
           <Text style={styles.body}>Your employer pays 100% of your own dental insurance premium.</Text>
           <Text style={styles.body}>Vision</Text>
           <Text style={styles.body}>Your employer pays 100% of your own vision insurance premium.</Text>
+          {/* BENEFITS_LEAVE_V1: vacation + sick leave, display only */}
+          <Text style={styles.body}>Vacation</Text>
+          <Text style={styles.body}>Paid vacation starts with your employment. Accrual amounts are not yet specified.</Text>
+          <Text style={styles.body}>Sick Leave</Text>
+          <Text style={styles.body}>Paid sick leave is available starting at employment. Details are not yet specified.</Text>
           <Text style={styles.body}>401(k)</Text>
           <Text style={styles.body}>Your employer matches your contributions dollar for dollar, up to 5% of eligible pay. Example: on $1,000 of eligible pay, contribute $50 and your employer adds $50.</Text>
           <Text style={styles.body}>Benefits information only. Viewing this screen does not enroll you, set contributions, or deduct money.</Text>
@@ -858,7 +937,7 @@ function Game({ initialSave, persistSave }) {
             {scenePhase === 'complete' && (<>
               <Text style={styles.body}>Shift complete!</Text>
               <Text style={styles.body}>
-                {'You earned $' + warehouseShiftPay + ' in pending wages and ' + WAREHOUSE_JOB.shiftXp + ' XP.'}
+                {'You earned $' + jobShiftPay + ' in pending wages and ' + activeJob.shiftXp + ' XP.'}
               </Text>
               <Text style={styles.body}>{'Pending wages: $' + pendingWages + '.'}</Text>
               <Text style={styles.body}>
@@ -912,10 +991,10 @@ function Game({ initialSave, persistSave }) {
         <StatusBar barStyle="light-content" />
         <ScrollView contentContainerStyle={styles.page}>
           <Text style={styles.eyebrow}>EMPLOYMENT CENTER</Text>
-          <Text style={styles.title}>{WAREHOUSE_JOB.title} - Paid Training</Text>
-          <Text style={styles.body}>Duration: {WAREHOUSE_JOB.trainingHours} in-game hours</Text>
-          <Text style={styles.body}>{'Rate: $' + WAREHOUSE_JOB.trainingRate + '/hour'}</Text>
-          <Text style={styles.body}>{'Training earnings: $' + warehouseTrainingPay + ', payable Friday'}</Text>
+          <Text style={styles.title}>{activeJob.title} - Paid Training</Text>
+          <Text style={styles.body}>Duration: {activeJob.trainingHours} in-game hours</Text>
+          <Text style={styles.body}>{'Rate: $' + activeJob.trainingRate + '/hour'}</Text>
+          <Text style={styles.body}>{'Training earnings: $' + jobTrainingPay + ', payable Friday'}</Text>
           <Text style={styles.body}>No fee</Text>
           {training === 'incomplete' && employment === 'hired' && (<>
             <TouchableOpacity style={styles.primary} onPress={completeTraining}><Text style={styles.primaryText}>COMPLETE TRAINING</Text></TouchableOpacity>
@@ -924,7 +1003,7 @@ function Game({ initialSave, persistSave }) {
             <Text style={styles.body}>{'Training complete. Pending wages: $' + pendingWages + ', payable Friday.'}</Text>
           </>)}
           {trainingMessage !== '' && (<Text style={styles.body}>{trainingMessage}</Text>)}
-          <Text style={styles.body}>{'$' + warehouseTrainingPay + ' training pay added to pending wages. Paid out with Friday payroll.'}</Text>
+          <Text style={styles.body}>{'$' + jobTrainingPay + ' training pay added to pending wages. Paid out with Friday payroll.'}</Text>
           <TouchableOpacity style={styles.secondary} onPress={() => { setTrainingMessage(''); setPlace('EMPLOYMENT'); }}><Text style={styles.secondaryText}>BACK TO EMPLOYMENT CENTER</Text></TouchableOpacity>
         </ScrollView>
       </SafeAreaView>
@@ -942,7 +1021,7 @@ function Game({ initialSave, persistSave }) {
 
         <ScrollView contentContainerStyle={styles.page}>
           <Text style={styles.eyebrow}>EMPLOYMENT CENTER</Text>
-          <Text style={styles.title}>Warehouse Shift</Text>
+          <Text style={styles.title}>{activeJob.title + ' Shift'}</Text>
 
           <Text style={styles.body}>Today is {DAY_NAMES[day % 7]}.</Text>
 
@@ -952,23 +1031,37 @@ function Game({ initialSave, persistSave }) {
 
           {canWork && (<>
             <Text style={styles.body}>
-              {'Complete one ' + WAREHOUSE_JOB.shiftHours + '-hour shift to earn $' + warehouseShiftPay + ' in pending wages and ' + WAREHOUSE_JOB.shiftXp + ' XP. Wages pay out on Friday.'}
+              {'Complete one ' + activeJob.shiftHours + '-hour shift to earn $' + jobShiftPay + ' in pending wages and ' + activeJob.shiftXp + ' XP. Wages pay out on Friday.'}
             </Text>
 
             <Text style={styles.body}>{'Pending wages: $' + pendingWages}</Text>
             <Text style={styles.body}>{'Available paycheck: $' + paycheck}</Text>
 
             {!shiftDoneToday ? (
-              <TouchableOpacity
-                style={styles.primary}
-                onPress={() => { setScenePhase('ready'); setPlace('WORK_VISUAL'); }}
-              >
-                <Text style={styles.primaryText}>
-                  {'WORK A SHIFT — EARN $' + warehouseShiftPay + ' PENDING'}
-                </Text>
-              </TouchableOpacity>
+              activeJob.visualShift ? (
+                <TouchableOpacity
+                  style={styles.primary}
+                  onPress={() => { setScenePhase('ready'); setPlace('WORK_VISUAL'); }}
+                >
+                  <Text style={styles.primaryText}>
+                    {'WORK A SHIFT — EARN $' + jobShiftPay + ' PENDING'}
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={styles.primary}
+                  onPress={() => { if (awardShift()) setShiftMessage('Shift complete! You earned $' + jobShiftPay + ' in pending wages and ' + activeJob.shiftXp + ' XP.'); }}
+                >
+                  <Text style={styles.primaryText}>
+                    {'WORK A SHIFT — EARN $' + jobShiftPay + ' PENDING'}
+                  </Text>
+                </TouchableOpacity>
+              )
             ) : (
               <Text style={styles.body}>Shift completed for today. Next shift available tomorrow.</Text>
+            )}
+            {shiftMessage !== '' && (
+              <Text style={styles.body}>{shiftMessage}</Text>
             )}
 
             {paycheck > 0 && (
@@ -990,7 +1083,7 @@ function Game({ initialSave, persistSave }) {
 
           <TouchableOpacity
             style={styles.secondary}
-            onPress={() => { setPaycheckMessage(''); setPlace(null); }}
+            onPress={() => { setPaycheckMessage(''); setShiftMessage(''); setPlace(null); }}
           >
             <Text style={styles.secondaryText}>BACK TO MAP</Text>
           </TouchableOpacity>
@@ -1056,9 +1149,42 @@ function Game({ initialSave, persistSave }) {
             )}
             {housingMessage !== '' && (<Text style={styles.body}>{housingMessage}</Text>)}
           </>) : (<>
-            <Text style={styles.title}>You\u2019re Housed</Text>
+            <Text style={styles.title}>You're Housed</Text>
             <Text style={styles.body}>{'Current housing: ' + HOUSING_GOAL.name}</Text>
-            <Text style={styles.body}>First month\u2019s rent paid from savings.</Text>
+            <Text style={styles.body}>First month's rent paid from savings.</Text>
+          </>)}
+
+          {housing === 'room_rental' && (<>
+            {/* GOAL_LADDER_V1: life goals after housing. */}
+            <Text style={styles.eyebrow}>LIFE GOALS</Text>
+            {LIFE_GOALS.map((g) => {
+              const done = goalsDone.includes(g.id);
+              const value = g.kind === 'credit' ? credit : savings;
+              const nextGoal = LIFE_GOALS.find((x) => !goalsDone.includes(x.id));
+              const isNext = !done && nextGoal !== undefined && nextGoal.id === g.id;
+              const frac = g.kind === 'credit'
+                ? Math.min(1, Math.max(0, (value - 575) / (g.target - 575)))
+                : Math.min(1, value / g.target);
+              return (
+                <View key={g.id}>
+                  <Text style={styles.body}>{(done ? '\u2713 ' : '') + g.name}</Text>
+                  {done ? (
+                    <Text style={styles.body}>{g.doneText}</Text>
+                  ) : isNext ? (<>
+                    <Text style={styles.body}>{g.targetText}</Text>
+                    <Text style={styles.body}>{g.kind === 'credit' ? ('Credit ' + value + ' of ' + g.target) : ('Saved $' + Math.min(value, g.target) + ' of $' + g.target)}</Text>
+                    <View style={{ height: 10, backgroundColor: '#1c2a3a', borderRadius: 5, overflow: 'hidden' }}>
+                      <View style={{ height: 10, width: Math.round(frac * 100) + '%', backgroundColor: GOLD }} />
+                    </View>
+                  </>) : (
+                    <Text style={styles.body}>{g.targetText}</Text>
+                  )}
+                </View>
+              );
+            })}
+            {goalsDone.length === LIFE_GOALS.length && (
+              <Text style={styles.body}>Every life goal complete. Sky's the limit!</Text>
+            )}
           </>)}
 
           <TouchableOpacity
