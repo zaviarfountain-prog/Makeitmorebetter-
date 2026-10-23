@@ -121,7 +121,7 @@ const SKY_SAVE_KEY = "skys-limit-save-v1";
 const SKY_INITIAL = {
   step: 0, cash: 2500, savings: 0,
   credit: 575, xp: 0, coins: 0, place: null, employment: 'none',
-  training: 'incomplete', pendingWages: 0, goalsDone: [],
+  training: 'incomplete', pendingWages: 0, goalsDone: [], pendingEvent: null,
   day: 0, paycheck: 0, lastPayday: -1, lastShiftDay: -1, housing: 'none', jobId: 'none'
 };
 
@@ -177,6 +177,51 @@ const LIFE_GOALS = [
   { id: 'skys_limit', name: "Sky's the Limit", kind: 'savings', target: 3000,
     targetText: 'Have $3,000 in savings.',
     doneText: "From getting housed to getting ahead\u2014look how far you've come!" },
+];
+/* LIFE_EVENTS_V1: surprise life events, rolled when the player wakes up.
+ * Wording and amounts are a STARTER DECK for Lori to rewrite -- every
+ * title, text, choice and dollar amount lives in this one table.
+ * Effects use the existing systems only: cash, pending wages, XP,
+ * credit (capped at 850, same as deposits). needsJob events only roll
+ * for hired + trained players. */
+const EVENT_CHANCE = 0.45;
+const LIFE_EVENTS = [
+  { id: 'overtime', needsJob: true, title: 'Overtime Offer',
+    text: 'Your boss asks if you can stay late today. The extra hours go on this week\u2019s pay.',
+    choices: [
+      { label: 'Stay late (+$72 pending pay)', pending: 72, result: 'You stayed late. $72 was added to your pending wages.' },
+      { label: 'Head home', result: 'You passed on the overtime and kept your evening.' },
+    ] },
+  { id: 'friend_loan', title: 'A Friend in Need',
+    text: 'Your friend is short on rent money and asks to borrow $50 until payday.',
+    choices: [
+      { label: 'Lend $50 (+40 XP)', cash: -50, xp: 40, result: 'You helped a friend out. That means something. (+40 XP)' },
+      { label: 'Say you can\u2019t', result: 'You had to say no this time. Building your own cushion comes first.' },
+    ] },
+  { id: 'side_gig', title: 'Weekend Side Gig',
+    text: 'A neighbor offers you $60 cash to help move furniture today.',
+    choices: [
+      { label: 'Take the gig (+$60)', cash: 60, result: 'Hard work, quick cash. +$60.' },
+      { label: 'Rest instead', result: 'You took the day for yourself.' },
+    ] },
+  { id: 'found_wallet', title: 'Found Wallet',
+    text: 'You find a wallet on the sidewalk. There\u2019s $75 cash inside and no ID.',
+    choices: [
+      { label: 'Keep the $75', cash: 75, result: 'You kept the $75.' },
+      { label: 'Turn it in (+40 XP)', xp: 40, result: 'You turned the wallet in. Doing right feels right. (+40 XP)' },
+    ] },
+  { id: 'phone_bill', title: 'Phone Bill Due',
+    text: 'Your phone bill is due today: $45. Paying late adds a $15 fee.',
+    choices: [
+      { label: 'Pay $45 now', cash: -45, result: 'Phone bill paid on time. $45 gone, no drama.' },
+      { label: 'Pay late (-$15 fee)', cash: -15, result: 'You paid the $15 late fee and pushed the bill back.' },
+    ] },
+  { id: 'credit_workshop', title: 'Free Credit Workshop',
+    text: 'The library is running a free workshop on building credit tonight.',
+    choices: [
+      { label: 'Attend (+3 credit)', credit: 3, result: 'You showed up and learned the game. Credit +3.' },
+      { label: 'Skip it', result: 'You skipped the workshop this time.' },
+    ] },
 ];
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const FRIDAY = 4;
@@ -234,6 +279,10 @@ export default function App() {
             saved.goalsDone = [];
           saved.goalsDone = saved.goalsDone.filter((id) =>
             ["breathing_room", "building_name", "first_thousand", "solid_ground", "skys_limit"].includes(id));
+          /* Life events are new: older saves have no event waiting. */
+          if (typeof saved.pendingEvent !== "string" ||
+            !["overtime", "friend_loan", "side_gig", "found_wallet", "phone_bill", "credit_workshop"].includes(saved.pendingEvent))
+            saved.pendingEvent = null;
           /* Job choice is new: saves from before it were warehouse-only. */
           if (saved.jobId === undefined || !["none", "warehouse", "cityhall"].includes(saved.jobId))
             saved.jobId = saved.employment === 'none' ? 'none' : 'warehouse';
@@ -330,6 +379,8 @@ function Game({ initialSave, persistSave }) {
   const [housing, setHousing] = useState(initialSave.housing);
   const [housingMessage, setHousingMessage] = useState("");
   const [goalsDone, setGoalsDone] = useState(initialSave.goalsDone);
+  const [pendingEvent, setPendingEvent] = useState(initialSave.pendingEvent);
+  const [eventMessage, setEventMessage] = useState('');
   const [housingConfirm, setHousingConfirm] = useState(false);
   const [jobId, setJobId] = useState(initialSave.jobId);
   const [shiftMessage, setShiftMessage] = useState("");
@@ -357,8 +408,8 @@ function Game({ initialSave, persistSave }) {
   const [benefitsFrom, setBenefitsFrom] = useState(null);
 
   React.useEffect(() => {
-    persistSave({ step, cash, savings, credit, xp, coins, place, employment, training, pendingWages, day, paycheck, lastPayday, lastShiftDay, housing, goalsDone, jobId });
-  }, [step, cash, savings, credit, xp, coins, place, employment, training, pendingWages, day, paycheck, lastPayday, lastShiftDay, housing, goalsDone, jobId, persistSave]);
+    persistSave({ step, cash, savings, credit, xp, coins, place, employment, training, pendingWages, day, paycheck, lastPayday, lastShiftDay, housing, goalsDone, jobId, pendingEvent });
+  }, [step, cash, savings, credit, xp, coins, place, employment, training, pendingWages, day, paycheck, lastPayday, lastShiftDay, housing, goalsDone, jobId, pendingEvent, persistSave]);
 
   /* GOAL_LADDER_V1: latch newly met life goals. Only counts after the
    * lease is signed; existing progress (e.g. credit) counts too. */
@@ -680,7 +731,28 @@ function Game({ initialSave, persistSave }) {
   const restDay = () => {
     paidWorkShiftRef.current = false;
     setShiftMessage('');
+    setEventMessage('');
     setDay((d) => d + 1);
+    /* LIFE_EVENTS_V1: some mornings bring a surprise. No new roll while
+     * an event is still waiting for an answer. */
+    if (!pendingEvent && Math.random() < EVENT_CHANCE) {
+      const pool = LIFE_EVENTS.filter(
+        (e) => !e.needsJob || (employment === 'hired' && training === 'completed')
+      );
+      if (pool.length > 0) {
+        setPendingEvent(pool[Math.floor(Math.random() * pool.length)].id);
+      }
+    }
+  };
+
+  /* LIFE_EVENTS_V1: apply the player's choice, then clear the event. */
+  const applyEventChoice = (choice) => {
+    if (choice.cash) setCash((c) => Math.max(0, c + choice.cash));
+    if (choice.pending) setPendingWages((w) => w + choice.pending);
+    if (choice.xp) setXp((x) => x + choice.xp);
+    if (choice.credit) setCredit((s) => Math.min(850, s + choice.credit));
+    setEventMessage(choice.result);
+    setPendingEvent(null);
   };
 
   /*
@@ -737,6 +809,7 @@ function Game({ initialSave, persistSave }) {
     collectPayRef.current = false;
     setHousing('none');
     setGoalsDone([]);
+    setPendingEvent(null);
     setHousingMessage('');
     setHousingConfirm(false);
   };
@@ -1119,6 +1192,33 @@ function Game({ initialSave, persistSave }) {
               REST — WAKE UP {tomorrow.toUpperCase()}
             </Text>
           </TouchableOpacity>
+
+          {/* LIFE_EVENTS_V1: a waiting event is answered here, on HOME. */}
+          {pendingEvent ? (() => {
+            const ev = LIFE_EVENTS.find((e) => e.id === pendingEvent);
+            if (!ev) return null;
+            return (<>
+              <Text style={styles.eyebrow}>LIFE EVENT</Text>
+              <View style={[styles.card, styles.cardGold]}>
+                <Text style={styles.title}>{ev.title}</Text>
+                <Text style={styles.body}>{ev.text}</Text>
+                {ev.choices.map((ch) => {
+                  const afford = !ch.cash || ch.cash >= 0 || cash >= -ch.cash;
+                  return (
+                    <TouchableOpacity
+                      key={ch.label}
+                      style={afford ? styles.primary : styles.secondary}
+                      disabled={!afford}
+                      onPress={() => applyEventChoice(ch)}
+                    >
+                      <Text style={styles.primaryText}>{afford ? ch.label : ch.label + ' (not enough cash)'}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </>);
+          })() : null}
+          {eventMessage !== '' && (<Text style={styles.body}>{eventMessage}</Text>)}
 
           {/* HOUSING_SLICE_V1: first goal -- earn and save toward a place to live. */}
           <Text style={styles.eyebrow}>HOUSING GOAL</Text>
