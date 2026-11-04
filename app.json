@@ -23,6 +23,9 @@
       "eas": {
         "projectId": "0d8c4ad5-7ce1-4fce-bd51-58a823bbc475"
       }
+    },
+    "experiments": {
+      "baseUrl": "/Makeitmorebetter-"
     }
   }
 }
